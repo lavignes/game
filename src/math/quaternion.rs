@@ -17,8 +17,9 @@ impl Quaternion {
     }
 
     #[inline]
-    pub fn from_axis_angle<T: AsRef<Vector3>>(axis: T, angle: f32) -> Self {
-        let axis = axis.as_ref();
+    pub fn from_axis_angle<Axis: Into<Vector3>>(axis: Axis, angle: f32) -> Self {
+        let axis = axis.into();
+
         let half_theta = angle / 2.0;
         let sin_half_theta = half_theta.sin();
         let cos_half_theta = half_theta.cos();
@@ -40,7 +41,16 @@ impl Quaternion {
         Self::from_axis_angle(Vector3::forward(), angle)
     }
 
-    pub fn look_at(position: Vector3, at: Vector3, up: Vector3) -> Self {
+    pub fn look_at<Pos, At, Up>(position: Pos, at: At, up: Up) -> Self
+    where
+        Pos: Into<Vector3>,
+        At: Into<Vector3>,
+        Up: Into<Vector3>,
+    {
+        let position = position.into();
+        let at = at.into();
+        let up = up.into();
+
         let forward = (at - position).normalized();
         let dot = Vector3::forward().dot(forward);
         if (dot + 1.0).abs() <= f32::EPSILON {
@@ -68,29 +78,29 @@ impl Quaternion {
 
     #[inline]
     pub fn right_axis(&self) -> Vector3 {
-        Vector3::right().rotated(self)
+        Vector3::right().rotated(*self)
     }
 
     #[inline]
     pub fn left_axis(&self) -> Vector3 {
-        Vector3::left().rotated(self)
+        Vector3::left().rotated(*self)
     }
 
     #[inline]
     pub fn up_axis(&self) -> Vector3 {
-        Vector3::up().rotated(self)
+        Vector3::up().rotated(*self)
     }
 
     #[inline]
     pub fn forward_axis(&self) -> Vector3 {
-        Vector3::forward().rotated(self)
+        Vector3::forward().rotated(*self)
     }
 
     /// A *very* fast interpolation. Only really useful for
     /// interpolating as long as the quaternions are aligned with
     /// an axis.
-    pub fn lerp<Rhs: AsRef<Quaternion>>(&self, rhs: Rhs, dt: f32) -> Self {
-        let rhs = rhs.as_ref();
+    pub fn lerp<Rhs: Into<Quaternion>>(&self, rhs: Rhs, dt: f32) -> Self {
+        let rhs = rhs.into();
         let cos_half_theta = self.0.dot(rhs.0);
         if cos_half_theta < 0.0 {
             return Self(((-self.0) - rhs.0) * dt + self.0);
@@ -102,14 +112,14 @@ impl Quaternion {
     /// interpolating as long as the quaternions are aligned with
     /// an axis.
     #[inline]
-    pub fn nlerp<Rhs: AsRef<Quaternion>>(&self, rhs: Rhs, dt: f32) -> Self {
+    pub fn nlerp<Rhs: Into<Quaternion>>(&self, rhs: Rhs, dt: f32) -> Self {
         self.lerp(rhs, dt).normalized()
     }
 
     /// Interpolate between two quaternions.
     #[inline]
-    pub fn slerp<Rhs: AsRef<Quaternion>>(&self, rhs: Rhs, dt: f32) -> Self {
-        let rhs = rhs.as_ref();
+    pub fn slerp<Rhs: Into<Quaternion>>(&self, rhs: Rhs, dt: f32) -> Self {
+        let rhs = rhs.into();
         let cos_half_theta = self.0.dot(rhs.0);
         if cos_half_theta.abs() >= 1.0 {
             return *self;
@@ -125,23 +135,17 @@ impl Quaternion {
     }
 }
 
-impl AsRef<Quaternion> for Quaternion {
-    fn as_ref(&self) -> &Quaternion {
-        self
-    }
-}
-
 impl MulAssign<Quaternion> for Quaternion {
     #[inline]
     fn mul_assign(&mut self, rhs: Quaternion) {
-        *self = self.as_ref() * rhs;
+        *self = *self * rhs;
     }
 }
 
 impl MulAssign<&Quaternion> for Quaternion {
     #[inline]
     fn mul_assign(&mut self, rhs: &Quaternion) {
-        *self = self.as_ref() * rhs;
+        *self = *self * rhs;
     }
 }
 

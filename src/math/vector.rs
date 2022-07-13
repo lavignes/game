@@ -1,5 +1,4 @@
 use std::{
-    convert::AsRef,
     ops::{Add, Div, Index, IndexMut, Mul, Neg, Sub},
     simd::{self, f32x2, f32x4, Simd},
 };
@@ -90,13 +89,6 @@ macro_rules! vec_simd_binop {
 
 macro_rules! vec_simd_misc {
     ($vec_type:ident, $simd_type:ident) => {
-        impl AsRef<Self> for $vec_type {
-            #[inline]
-            fn as_ref(&self) -> &Self {
-                self
-            }
-        }
-
         impl Neg for $vec_type {
             type Output = Self;
 
@@ -256,8 +248,8 @@ impl Vector2 {
     }
 
     #[inline]
-    pub fn dot<Rhs: AsRef<Self>>(&self, rhs: Rhs) -> f32 {
-        let product = f32x2::from_array(self.0) * f32x2::from_array(rhs.as_ref().0);
+    pub fn dot<Rhs: Into<Self>>(&self, rhs: Rhs) -> f32 {
+        let product = f32x2::from_array(self.0) * f32x2::from_array(rhs.into().0);
         product.reduce_sum()
     }
 
@@ -333,6 +325,20 @@ impl Into<(usize, usize)> for Vector2 {
     }
 }
 
+impl Into<Vector3> for Vector2 {
+    #[inline]
+    fn into(self) -> Vector3 {
+        self.widened(0.0)
+    }
+}
+
+impl Into<Vector4> for Vector2 {
+    #[inline]
+    fn into(self) -> Vector4 {
+        Vector4([self.0[0], self.0[1], 0.0, 0.0])
+    }
+}
+
 impl Vector3 {
     #[inline]
     pub const fn new(x: f32, y: f32, z: f32) -> Self {
@@ -381,7 +387,7 @@ impl Vector3 {
 
     #[inline]
     pub fn normal_squared(&self) -> f32 {
-        self.dot(self)
+        self.dot(*self)
     }
 
     #[inline]
@@ -390,8 +396,8 @@ impl Vector3 {
     }
 
     #[inline]
-    pub fn cross<Rhs: AsRef<Self>>(&self, rhs: Rhs) -> Self {
-        let rhs = rhs.as_ref();
+    pub fn cross<Rhs: Into<Self>>(&self, rhs: Rhs) -> Self {
+        let rhs = rhs.into();
         Self([
             self.0[1] * rhs.0[2] - self.0[2] * rhs.0[1],
             self.0[2] * rhs.0[0] - self.0[0] * rhs.0[2],
@@ -400,8 +406,8 @@ impl Vector3 {
     }
 
     #[inline]
-    pub fn dot<Rhs: AsRef<Self>>(&self, rhs: Rhs) -> f32 {
-        let rhs = rhs.as_ref();
+    pub fn dot<Rhs: Into<Self>>(&self, rhs: Rhs) -> f32 {
+        let rhs = rhs.into();
         (self.0[0] * rhs.0[0]) + (self.0[1] * rhs.0[1]) + (self.0[2] * rhs.0[2])
     }
 
@@ -441,8 +447,8 @@ impl Vector3 {
     }
 
     #[inline]
-    pub fn rotated<T: AsRef<Quaternion>>(&self, rotation: T) -> Self {
-        let rotation = rotation.as_ref();
+    pub fn rotated<T: Into<Quaternion>>(&self, rotation: T) -> Self {
+        let rotation = rotation.into();
         (rotation * self * rotation.conjugated()).0.narrowed()
     }
 }
@@ -485,13 +491,6 @@ impl IndexMut<usize> for Vector3 {
     }
 }
 
-impl AsRef<Vector3> for Vector3 {
-    #[inline]
-    fn as_ref(&self) -> &Self {
-        self
-    }
-}
-
 impl AsRef<[f32]> for Vector3 {
     #[inline]
     fn as_ref(&self) -> &[f32] {
@@ -510,6 +509,13 @@ impl From<(usize, usize, usize)> for Vector3 {
     #[inline]
     fn from(value: (usize, usize, usize)) -> Self {
         Self([value.0 as f32, value.1 as f32, value.2 as f32])
+    }
+}
+
+impl Into<Vector4> for Vector3 {
+    #[inline]
+    fn into(self) -> Vector4 {
+        self.widened(0.0)
     }
 }
 
@@ -565,14 +571,14 @@ impl Vector4 {
     }
 
     #[inline]
-    pub fn dot<Rhs: AsRef<Self>>(&self, rhs: Rhs) -> f32 {
-        let product = f32x4::from_array(self.0) * f32x4::from_array(rhs.as_ref().0);
+    pub fn dot<Rhs: Into<Self>>(&self, rhs: Rhs) -> f32 {
+        let product = f32x4::from_array(self.0) * f32x4::from_array(rhs.into().0);
         product.reduce_sum()
     }
 
     #[inline]
-    pub fn cross<Rhs: AsRef<Self>>(&self, rhs: Rhs) -> Self {
-        let rhs = f32x4::from_array(rhs.as_ref().0);
+    pub fn cross<Rhs: Into<Self>>(&self, rhs: Rhs) -> Self {
+        let rhs = f32x4::from_array(rhs.into().0);
         let a = simd::simd_swizzle!(f32x4::from_array(self.0), [3, 0, 2, 1]);
         let b = simd::simd_swizzle!(rhs, [3, 1, 0, 2]);
         let c = a * rhs;
@@ -583,7 +589,7 @@ impl Vector4 {
 
     #[inline]
     pub fn squared_normal(&self) -> f32 {
-        self.dot(self)
+        self.dot(*self)
     }
 
     #[inline]

@@ -30,21 +30,21 @@ impl Matrix4 {
     }
 
     #[inline]
-    pub const fn translate(v: Vector3) -> Self {
+    pub const fn translate(vec: Vector3) -> Self {
         Self([
             Vector4([1.0, 0.0, 0.0, 0.0]),
             Vector4([0.0, 1.0, 0.0, 0.0]),
             Vector4([0.0, 0.0, 1.0, 0.0]),
-            Vector4([v.0[0], v.0[1], v.0[2], 1.0]),
+            Vector4([vec.0[0], vec.0[1], vec.0[2], 1.0]),
         ])
     }
 
     #[inline]
-    pub const fn scale(v: Vector3) -> Self {
+    pub const fn scale(vec: Vector3) -> Self {
         Self([
-            Vector4([v.0[0], 0.0, 0.0, 0.0]),
-            Vector4([0.0, v.0[1], 0.0, 0.0]),
-            Vector4([0.0, 0.0, v.0[2], 0.0]),
+            Vector4([vec.0[0], 0.0, 0.0, 0.0]),
+            Vector4([0.0, vec.0[1], 0.0, 0.0]),
+            Vector4([0.0, 0.0, vec.0[2], 0.0]),
             Vector4([0.0, 0.0, 0.0, 1.0]),
         ])
     }
@@ -111,10 +111,10 @@ impl Matrix4 {
     }
 
     #[inline]
-    pub fn look_at(position: Vector3, at: Vector3, up: Vector3) -> Self {
-        let position = position.widened(0.0);
-        let at = at.widened(0.0);
-        let up = up.widened(0.0);
+    pub fn look_at<Pos, At, Up>(position: Pos, at: At, up: Up) -> Self where Pos: Into<Vector4>, At: Into<Vector4>, Up: Into<Vector4> {
+        let position = position.into();
+        let at = at.into();
+        let up = up.into();
 
         let z = (at - position).normalized();
         let x = z.cross(up).normalized();
@@ -248,9 +248,11 @@ impl Matrix4 {
             #[cfg(all(target_arch = "x86_64", target_feature = "sse3"))]
             {
                 use std::{mem, arch::x86_64};
-                let a = mem::transmute(a);
-                let b = mem::transmute(b);
-                mem::transmute(_mm_hadd_ps(a, b))
+                unsafe {
+                    let a = mem::transmute(a);
+                    let b = mem::transmute(b);
+                    mem::transmute(x86_64::_mm_hadd_ps(a, b))
+                }
             }
             #[cfg(any(not(target_arch = "x86_64"), not(target_feature = "sse3")))]
             {
