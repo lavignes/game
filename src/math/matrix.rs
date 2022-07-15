@@ -30,21 +30,21 @@ impl Matrix4 {
     }
 
     #[inline]
-    pub const fn translate(vec: Vector3) -> Self {
+    pub const fn translate(v: Vector3) -> Self {
         Self([
             Vector4([1.0, 0.0, 0.0, 0.0]),
             Vector4([0.0, 1.0, 0.0, 0.0]),
             Vector4([0.0, 0.0, 1.0, 0.0]),
-            Vector4([vec.0[0], vec.0[1], vec.0[2], 1.0]),
+            Vector4([v.0[0], v.0[1], v.0[2], 1.0]),
         ])
     }
 
     #[inline]
-    pub const fn scale(vec: Vector3) -> Self {
+    pub const fn scale(v: Vector3) -> Self {
         Self([
-            Vector4([vec.0[0], 0.0, 0.0, 0.0]),
-            Vector4([0.0, vec.0[1], 0.0, 0.0]),
-            Vector4([0.0, 0.0, vec.0[2], 0.0]),
+            Vector4([v.0[0], 0.0, 0.0, 0.0]),
+            Vector4([0.0, v.0[1], 0.0, 0.0]),
+            Vector4([0.0, 0.0, v.0[2], 0.0]),
             Vector4([0.0, 0.0, 0.0, 1.0]),
         ])
     }
@@ -111,13 +111,16 @@ impl Matrix4 {
     }
 
     #[inline]
-    pub fn look_at<Pos, At, Up>(position: Pos, at: At, up: Up) -> Self where Pos: Into<Vector4>, At: Into<Vector4>, Up: Into<Vector4> {
+    pub fn look_at<Pos, At, Up>(position: Pos, at: At, up: Up) -> Self
+    where
+        Pos: Into<Vector4>,
+        At: Into<Vector4>,
+        Up: Into<Vector4>,
+    {
         let position = position.into();
-        let at = at.into();
-        let up = up.into();
 
-        let z = (at - position).normalized();
-        let x = z.cross(up).normalized();
+        let z = (at.into() - position).normalized();
+        let x = z.cross(up.into()).normalized();
         let y = x.cross(z);
         let z = -z;
         let w = f32x4::from_array([x.dot(position), y.dot(position), z.dot(position), -1.0]);
@@ -244,6 +247,7 @@ impl Matrix4 {
         let det_m = det_m + (det_b * det_c);
 
         // horizontal add packed
+        #[inline]
         fn hadd(a: f32x4, b: f32x4) -> f32x4 {
             #[cfg(all(target_arch = "x86_64", target_feature = "sse3"))]
             {
@@ -307,7 +311,32 @@ impl From<Quaternion> for Matrix4 {
     #[inline]
     #[rustfmt::skip]
     fn from(q: Quaternion) -> Self {
-        // FIXME(lavignes): Need to optimize this. Its leftover from the scalar implementation
+        // // https://www.euclideanspace.com/maths/geometry/rotations/conversions/quaternionToMatrix/jay.htm
+        // let q = f32x4::from_array(q.0.0);
+        // 
+        // let a = simd::simd_swizzle!(q, [3, 2, 1, 0]);
+        // let b = simd::simd_swizzle!(q, [2, 3, 0, 1]);
+        // let c = simd::simd_swizzle!(q, [1, 0, 3, 2]);
+        // let d = simd::simd_swizzle!(q, [0, 1, 2, 3]);
+        // 
+        // // TODO(lavignes): could replace these masks with bitwise ops to flip the sign
+        // let m1 = Self([
+        //     Vector4((a * f32x4::from_array([1.0, 1.0, -1.0, 1.0])).to_array()),
+        //     Vector4((b * f32x4::from_array([-1.0, 1.0, 1.0, 1.0])).to_array()),
+        //     Vector4((c * f32x4::from_array([1.0, -1.0, 1.0, 1.0])).to_array()),
+        //     Vector4((d * f32x4::from_array([-1.0, -1.0, -1.0, 1.0])).to_array()),
+        // ]);
+        // 
+        // let m2 = Self([
+        //     Vector4((a * f32x4::from_array([1.0, 1.0, -1.0, -1.0])).to_array()),
+        //     Vector4((b * f32x4::from_array([-1.0, 1.0, 1.0, -1.0])).to_array()),
+        //     Vector4((c * f32x4::from_array([1.0, -1.0, 1.0, -1.0])).to_array()),
+        //     Vector4((d * f32x4::from_array([1.0, 1.0, 1.0, 1.0])).to_array()),
+        // ]);
+        // 
+        // m1 * m2
+
+        // LLVM Actually does a great job optimizing this. The unrolled matrix mul makes the other version seem less optimal
         Self([
             Vector4([2.0 * (q.0[0] * q.0[2] - q.0[3] * q.0[1]), 2.0 * (q.0[1] * q.0[2] + q.0[3] * q.0[0]), 1.0 - 2.0 * (q.0[0] * q.0[0] + q.0[1] * q.0[1]), 0.0]),
             Vector4([1.0 - 2.0 * (q.0[1] * q.0[1] + q.0[2] * q.0[2]), 2.0 * (q.0[0] * q.0[1] - q.0[3] * q.0[2]), 2.0 * (q.0[0] * q.0[2] + q.0[3] * q.0[1]), 0.0]),

@@ -112,6 +112,7 @@ macro_rules! vec_simd_misc {
             fn eq(&self, rhs: &Self) -> bool {
                 let a = $simd_type::from_array(self.0);
                 let b = $simd_type::from_array(rhs.0);
+                // TODO: This isn't SIMD I think
                 a == b
             }
         }

@@ -22,3 +22,6 @@ unsafe impl Pod for Matrix3 {}
 
 unsafe impl Zeroable for Matrix4 {}
 unsafe impl Pod for Matrix4 {}
+
+unsafe impl Zeroable for Quaternion {}
+unsafe impl Pod for Quaternion {}

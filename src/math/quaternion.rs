@@ -18,12 +18,10 @@ impl Quaternion {
 
     #[inline]
     pub fn from_axis_angle<Axis: Into<Vector3>>(axis: Axis, angle: f32) -> Self {
-        let axis = axis.into();
-
         let half_theta = angle / 2.0;
         let sin_half_theta = half_theta.sin();
         let cos_half_theta = half_theta.cos();
-        Self((axis * sin_half_theta).widened(cos_half_theta))
+        Self((axis.into() * sin_half_theta).widened(cos_half_theta))
     }
 
     #[inline]
@@ -47,14 +45,10 @@ impl Quaternion {
         At: Into<Vector3>,
         Up: Into<Vector3>,
     {
-        let position = position.into();
-        let at = at.into();
-        let up = up.into();
-
-        let forward = (at - position).normalized();
+        let forward = (at.into() - position.into()).normalized();
         let dot = Vector3::forward().dot(forward);
         if (dot + 1.0).abs() <= f32::EPSILON {
-            return Self::from_axis_angle(up, consts::PI);
+            return Self::from_axis_angle(up.into(), consts::PI);
         }
         if (dot - 1.0).abs() <= f32::EPSILON {
             return Self::identity();
