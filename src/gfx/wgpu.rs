@@ -1,8 +1,8 @@
 use futures::executor;
-use raw_window_handle::HasRawWindowHandle;
+use raw_window_handle::{HasRawDisplayHandle, HasRawWindowHandle};
 use wgpu::{
-    Backends, Device, DeviceDescriptor, Features, Instance, Limits, PowerPreference, Queue,
-    RequestAdapterOptions, RequestDeviceError, Surface,
+    Backends, Device, DeviceDescriptor, Features, Instance, Limits, Queue, RequestAdapterOptions,
+    RequestDeviceError,
 };
 
 #[derive(Debug, thiserror::Error)]
@@ -23,7 +23,7 @@ pub struct Wgpu {
 }
 
 impl Wgpu {
-    pub fn new<W: HasRawWindowHandle>(window: &W) -> Result<Self, WgpuError> {
+    pub fn new<W: HasRawWindowHandle + HasRawDisplayHandle>(window: &W) -> Result<Self, WgpuError> {
         let instance = Instance::new(Backends::PRIMARY);
         let surface = unsafe { instance.create_surface(window) };
 

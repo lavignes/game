@@ -9,6 +9,8 @@ bytemuck = "1"
 futures = { version = "0.3", features = ["thread-pool"] }
 pin-project-lite = "0.2"
 
+static_assertions = "1.0"
+
 thiserror = "1"
 anyhow = "1"
 
@@ -20,6 +22,6 @@ fnv = "1"
 bincode = "2.0.0-rc.1"
 bincode_derive = "2.0.0-rc.1"
 
-wgpu = "0.13.1"
-sdl2 = { version = "0.35.2", features = ["bundled", "raw-window-handle"] }
-raw-window-handle = "0.4"
+wgpu = "0.14.2"
+sdl2 = { git = "https://github.com/Rust-SDL2/rust-sdl2", features = ["bundled", "raw-window-handle"] }
+raw-window-handle = "0.5.0"
