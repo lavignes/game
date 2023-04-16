@@ -1,6 +1,6 @@
 use std::{
     ops::{Add, Div, Index, IndexMut, Mul, Neg, Sub},
-    simd::{self, f32x2, f32x4, Simd},
+    simd::{self, f32x2, f32x4, Simd, SimdFloat},
 };
 
 use crate::math::Quaternion;
@@ -589,13 +589,13 @@ impl Vector4 {
     }
 
     #[inline]
-    pub fn squared_normal(&self) -> f32 {
+    pub fn normal_squared(&self) -> f32 {
         self.dot(*self)
     }
 
     #[inline]
     pub fn length(&self) -> f32 {
-        self.squared_normal().sqrt()
+        self.normal_squared().sqrt()
     }
 
     #[inline]

@@ -1,14 +1,16 @@
-use sdl2::{
-    video::{Window, WindowBuildError},
-    Sdl,
-};
+use sdl2::{video::Window, Sdl};
 
 use crate::{
     gfx::wgpu::{Wgpu, WgpuError},
-    math::Vector2,
+    math::{Vector2, Vector3, Vector4},
 };
 
+pub mod mesh;
+pub mod texture;
 mod wgpu;
+
+pub use mesh::*;
+pub use texture::*;
 
 #[derive(Debug, thiserror::Error)]
 pub enum GfxError {
@@ -57,8 +59,33 @@ impl Gfx {
                 source: anyhow::anyhow!(e),
             })?;
 
-        let wgpu = Wgpu::new(&window)?;
+        let mut wgpu = Wgpu::new(&window, opts.window_size)?;
+
+        let mut mesh = wgpu.pop_mesh();
+
+        mesh.push_vertices(&[
+            Vertex {
+                position: Vector3::new(0.0, 0.5, 1.0),
+                ..Default::default()
+            },
+            Vertex {
+                position: Vector3::new(0.5, -0.5, 1.0),
+                ..Default::default()
+            },
+            Vertex {
+                position: Vector3::new(-0.5, -0.5, 1.0),
+                ..Default::default()
+            },
+        ]);
+
+        wgpu.queue_mesh_upload(mesh, 0);
 
         Ok(Self { wgpu, window })
+    }
+
+    #[inline]
+    pub fn tick(&mut self) {
+        self.wgpu.tick();
+        self.wgpu.render_frame();
     }
 }

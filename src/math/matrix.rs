@@ -1,6 +1,6 @@
 use std::{
     ops::Mul,
-    simd::{self, f32x4, Which},
+    simd::{self, f32x4, SimdFloat, SimdPartialOrd, Which},
 };
 
 use crate::math::{Quaternion, Vector3, Vector4};
@@ -173,7 +173,7 @@ impl Matrix4 {
         // handle scale
         let sq = (a * a) + (b * b) + (c * c);
         // If sq[i] <= EPSILON, then sq[i] = 1.0, else sq[i] = (1.0 / sq[i])
-        let is_small = sq.lanes_le(f32x4::splat(f32::EPSILON));
+        let is_small = sq.simd_le(f32x4::splat(f32::EPSILON));
         let sq = is_small.select(f32x4::splat(1.0), sq.recip());
 
         let a = a * sq;
@@ -313,12 +313,12 @@ impl From<Quaternion> for Matrix4 {
     fn from(q: Quaternion) -> Self {
         // // https://www.euclideanspace.com/maths/geometry/rotations/conversions/quaternionToMatrix/jay.htm
         // let q = f32x4::from_array(q.0.0);
-        // 
+        //
         // let a = simd::simd_swizzle!(q, [3, 2, 1, 0]);
         // let b = simd::simd_swizzle!(q, [2, 3, 0, 1]);
         // let c = simd::simd_swizzle!(q, [1, 0, 3, 2]);
         // let d = simd::simd_swizzle!(q, [0, 1, 2, 3]);
-        // 
+        //
         // // TODO(lavignes): could replace these masks with bitwise ops to flip the sign
         // let m1 = Self([
         //     Vector4((a * f32x4::from_array([1.0, 1.0, -1.0, 1.0])).to_array()),
@@ -326,14 +326,14 @@ impl From<Quaternion> for Matrix4 {
         //     Vector4((c * f32x4::from_array([1.0, -1.0, 1.0, 1.0])).to_array()),
         //     Vector4((d * f32x4::from_array([-1.0, -1.0, -1.0, 1.0])).to_array()),
         // ]);
-        // 
+        //
         // let m2 = Self([
         //     Vector4((a * f32x4::from_array([1.0, 1.0, -1.0, -1.0])).to_array()),
         //     Vector4((b * f32x4::from_array([-1.0, 1.0, 1.0, -1.0])).to_array()),
         //     Vector4((c * f32x4::from_array([1.0, -1.0, 1.0, -1.0])).to_array()),
         //     Vector4((d * f32x4::from_array([1.0, 1.0, 1.0, 1.0])).to_array()),
         // ]);
-        // 
+        //
         // m1 * m2
 
         // LLVM Actually does a great job optimizing this. The unrolled matrix mul makes the other version seem less optimal

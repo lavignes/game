@@ -1,7 +1,7 @@
 use std::{
     f32::consts,
     ops::{Mul, MulAssign},
-    simd::{self, f32x4},
+    simd::{self, f32x4, SimdFloat},
 };
 
 use crate::math::{Vector3, Vector4};
