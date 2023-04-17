@@ -2,7 +2,8 @@ use sdl2::{video::Window, Sdl};
 
 use crate::{
     gfx::wgpu::{Wgpu, WgpuError},
-    math::{Vector2, Vector3, Vector4},
+    math::{Matrix4, Quaternion, Vector2, Vector3, Vector4},
+    util,
 };
 
 pub mod mesh;
@@ -11,6 +12,73 @@ mod wgpu;
 
 pub use mesh::*;
 pub use texture::*;
+
+use self::wgpu::WgpuInitOptions;
+
+#[derive(Default, Debug)]
+pub struct PerspectiveProjection {
+    pub fov: f32,
+    pub aspect_ratio: f32,
+    pub near: f32,
+    pub far: f32,
+}
+
+impl From<&PerspectiveProjection> for Matrix4 {
+    #[inline]
+    fn from(p: &PerspectiveProjection) -> Matrix4 {
+        let depth = p.near - p.far;
+        let tan_fov = (p.fov / 2.0).tan();
+        Matrix4([
+            Vector4([1.0 / (tan_fov * p.aspect_ratio), 0.0, 0.0, 0.0]),
+            Vector4([0.0, 1.0 / tan_fov, 0.0, 0.0]),
+            Vector4([0.0, 0.0, (p.near + p.far) / depth, -1.0]),
+            Vector4([0.0, 0.0, (2.0 * p.far * p.near) / depth, 0.0]),
+        ])
+    }
+}
+
+#[derive(Debug)]
+pub struct Camera {
+    position: Vector3,
+    euler_angles: Vector2,
+}
+
+#[derive(Copy, Clone, Debug)]
+pub struct Transform {
+    pub position: Vector3,
+    pub scale: Vector3,
+    pub rotation: Quaternion,
+}
+
+impl Transform {
+    #[inline]
+    pub fn concat(&self, rhs: &Transform) -> Transform {
+        Transform {
+            position: self.position + rhs.position,
+            scale: self.scale * rhs.scale,
+            rotation: self.rotation * rhs.rotation,
+        }
+    }
+}
+
+impl Default for Transform {
+    #[inline]
+    fn default() -> Transform {
+        Transform {
+            position: Vector3::splat(0.0),
+            scale: Vector3::splat(1.0),
+            rotation: Quaternion::identity(),
+        }
+    }
+}
+
+impl From<&Transform> for Matrix4 {
+    #[inline]
+    fn from(t: &Transform) -> Matrix4 {
+        &(&Matrix4::scale(t.scale) * &t.rotation.normalized().into())
+            * &Matrix4::translate(t.position)
+    }
+}
 
 #[derive(Debug, thiserror::Error)]
 pub enum GfxError {
@@ -28,6 +96,8 @@ pub enum GfxError {
 pub struct GfxInitOptions<'a> {
     window_title: &'a str,
     window_size: Vector2,
+
+    projection: PerspectiveProjection,
 }
 
 impl<'a> Default for GfxInitOptions<'a> {
@@ -35,6 +105,12 @@ impl<'a> Default for GfxInitOptions<'a> {
         Self {
             window_title: "game",
             window_size: Vector2::new(800.0, 600.0),
+            projection: PerspectiveProjection {
+                fov: 1.0,
+                aspect_ratio: 800.0 / 600.0,
+                near: 0.001,
+                far: 65535.0,
+            },
         }
     }
 }
@@ -59,26 +135,47 @@ impl Gfx {
                 source: anyhow::anyhow!(e),
             })?;
 
-        let mut wgpu = Wgpu::new(&window, opts.window_size)?;
+        let mut wgpu = Wgpu::new(
+            &window,
+            WgpuInitOptions {
+                window_size: opts.window_size,
+                projection: opts.projection,
+            },
+        )?;
 
         let mut mesh = wgpu.pop_mesh();
 
         mesh.push_vertices(&[
             Vertex {
                 position: Vector3::new(0.0, 0.5, 1.0),
+                tex_coord: Vector2::new(0.5, 0.0),
                 ..Default::default()
             },
             Vertex {
                 position: Vector3::new(0.5, -0.5, 1.0),
+                tex_coord: Vector2::new(1.0, 1.0),
                 ..Default::default()
             },
             Vertex {
                 position: Vector3::new(-0.5, -0.5, 1.0),
+                tex_coord: Vector2::new(0.0, 1.0),
                 ..Default::default()
             },
         ]);
 
         wgpu.queue_mesh_upload(mesh, 0);
+
+        let mut texture = wgpu.pop_texture();
+        let mut reader = DDSReader::new();
+
+        reader
+            .read_into(
+                &mut util::buf_open("res/tex/test.dds").unwrap(),
+                &mut texture,
+            )
+            .unwrap();
+
+        wgpu.queue_texture_upload(texture, 0);
 
         Ok(Self { wgpu, window })
     }

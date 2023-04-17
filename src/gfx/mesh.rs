@@ -8,7 +8,6 @@ pub struct Vertex {
     pub position: Vector3,
     pub normal: Vector3,
     pub tex_coord: Vector2,
-    pub bone_weight: Vector4,
 }
 
 unsafe impl Pod for Vertex {}

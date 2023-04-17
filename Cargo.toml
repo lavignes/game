@@ -4,12 +4,11 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-bytemuck = "1"
-
 futures = { version = "0.3", features = ["thread-pool"] }
-pin-project-lite = "0.2"
+bytemuck = "1"
+bitflags = "2"
 
-static_assertions = "1.0"
+static_assertions = "1"
 
 thiserror = "1"
 anyhow = "1"
