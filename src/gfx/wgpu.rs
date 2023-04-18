@@ -19,9 +19,8 @@ use wgpu::{
     TextureViewDescriptor, TextureViewDimension, VertexBufferLayout, VertexState, VertexStepMode,
 };
 
-use super::PerspectiveProjection;
 use crate::{
-    gfx::{Camera, Mesh, Texture, Vertex},
+    gfx::{Camera, Mesh, PerspectiveProjection, Texture, Vertex},
     math::{Matrix4, Quaternion, Vector2, Vector3},
 };
 
@@ -240,22 +239,22 @@ impl TextureBuffer {
     }
 }
 
-#[repr(C)]
+#[repr(C, align(16))]
 #[derive(Copy, Clone, Default, Debug)]
 struct Projection(Matrix4);
 
 unsafe impl bytemuck::Zeroable for Projection {}
 unsafe impl bytemuck::Pod for Projection {}
 
-impl From<&PerspectiveProjection> for Projection {
+impl From<PerspectiveProjection> for Projection {
     #[inline]
-    fn from(projection: &PerspectiveProjection) -> Self {
-        let projection_matrix: Matrix4 = projection.into();
+    fn from(projection: PerspectiveProjection) -> Self {
+        let projection_matrix = Matrix4::from(projection);
         Projection(&projection_matrix * &Matrix4::vulkan_projection_correct())
     }
 }
 
-#[repr(C)]
+#[repr(C, align(16))]
 #[derive(Copy, Clone, Default, Debug)]
 struct View {
     matrix: Matrix4,
@@ -266,30 +265,30 @@ unsafe impl bytemuck::Zeroable for View {}
 unsafe impl bytemuck::Pod for View {}
 
 #[derive(Debug)]
-pub struct CameraView {
+struct ViewLookAt {
     view: View,
     at: Vector3,
 }
 
-impl From<&Camera> for CameraView {
+impl From<Camera> for ViewLookAt {
     #[inline]
-    fn from(camera: &Camera) -> Self {
+    fn from(camera: Camera) -> Self {
         let Camera {
             position,
             euler_angles,
         } = camera;
-        let quaternion = Quaternion::from_angle_up(euler_angles.x())
+        let quat = Quaternion::from_angle_up(euler_angles.x())
             * Quaternion::from_angle_right(euler_angles.y());
 
         // Here we create a unit vector from the camera in the direction of the camera angle
         // I don't understand exactly why the rotation quaternion is "backward"
-        let at = position - quaternion.forward_axis();
+        let at = position - quat.forward_axis();
 
         // Then we can pass it to the handy look at matrix
         Self {
             view: View {
-                matrix: Matrix4::look_at(*position, at, Vector3::up()),
-                position: *position,
+                matrix: Matrix4::look_at(position, at, Vector3::up()),
+                position,
             },
             at,
         }
@@ -306,6 +305,7 @@ pub enum WgpuError {
 pub struct WgpuInitOptions {
     pub window_size: Vector2,
     pub projection: PerspectiveProjection,
+    pub camera: Camera,
 }
 
 pub struct Wgpu {
@@ -330,7 +330,10 @@ pub struct Wgpu {
     complete_textures: FnvHashSet<TextureId>,
     texture_freelist: Vec<Texture>,
 
+    projection: Projection,
     projection_buffer: Buffer,
+
+    view_look_at: ViewLookAt,
     view_buffer: Buffer,
 
     vertex_buffer: VertexBuffer,
@@ -415,6 +418,20 @@ impl Wgpu {
         let indirect_buffer = IndirectBuffer::new(&device);
         let texture_buffer = TextureBuffer::new(&device);
 
+        let projection = Projection::from(opts.projection);
+        let projection_buffer = device.create_buffer_init(&BufferInitDescriptor {
+            label: Some("projection buffer"),
+            contents: bytemuck::bytes_of(&projection),
+            usage: BufferUsages::UNIFORM | BufferUsages::COPY_DST,
+        });
+
+        let view_look_at = ViewLookAt::from(opts.camera);
+        let view_buffer = device.create_buffer_init(&BufferInitDescriptor {
+            label: Some("view buffer"),
+            contents: bytemuck::bytes_of(&view_look_at.view),
+            usage: BufferUsages::UNIFORM | BufferUsages::COPY_DST,
+        });
+
         let shader = device.create_shader_module(wgpu::include_wgsl!("shader.wgsl"));
 
         let sampler = device.create_sampler(&SamplerDescriptor {
@@ -435,17 +452,27 @@ impl Wgpu {
             label: Some("render pipeline bind group layout"),
             entries: &[
                 BindGroupLayoutEntry {
-                    binding: 0, // instance buffer
-                    visibility: ShaderStages::VERTEX_FRAGMENT,
+                    binding: 0, // projection buffer
+                    visibility: ShaderStages::VERTEX,
                     ty: BindingType::Buffer {
-                        ty: BufferBindingType::Storage { read_only: true },
-                        has_dynamic_offset: true,
-                        min_binding_size: None, // TODO: not optimal
+                        ty: BufferBindingType::Uniform,
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
                     },
                     count: None,
                 },
                 BindGroupLayoutEntry {
-                    binding: 1, // texture buffer
+                    binding: 1, // view buffer
+                    visibility: ShaderStages::VERTEX,
+                    ty: BindingType::Buffer {
+                        ty: BufferBindingType::Uniform,
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
+                BindGroupLayoutEntry {
+                    binding: 2, // texture buffer
                     visibility: ShaderStages::FRAGMENT,
                     ty: BindingType::Texture {
                         sample_type: TextureSampleType::Float { filterable: false },
@@ -455,9 +482,19 @@ impl Wgpu {
                     count: None,
                 },
                 BindGroupLayoutEntry {
-                    binding: 2, // texture sampler
+                    binding: 3, // texture sampler
                     visibility: ShaderStages::FRAGMENT,
                     ty: BindingType::Sampler(SamplerBindingType::NonFiltering {}),
+                    count: None,
+                },
+                BindGroupLayoutEntry {
+                    binding: 4, // instance buffer
+                    visibility: ShaderStages::VERTEX_FRAGMENT,
+                    ty: BindingType::Buffer {
+                        ty: BufferBindingType::Storage { read_only: true },
+                        has_dynamic_offset: true,
+                        min_binding_size: None, // TODO: not optimal
+                    },
                     count: None,
                 },
             ],
@@ -467,15 +504,15 @@ impl Wgpu {
             layout: &bind_group_layout,
             entries: &[
                 BindGroupEntry {
-                    binding: 0, // instance buffer
-                    resource: BindingResource::Buffer(BufferBinding {
-                        buffer: &instance_buffer.buffer,
-                        offset: 0,
-                        size: None,
-                    }),
+                    binding: 0, // projection buffer
+                    resource: projection_buffer.as_entire_binding(),
                 },
                 BindGroupEntry {
-                    binding: 1, // texture buffer
+                    binding: 1, // view buffer
+                    resource: view_buffer.as_entire_binding(),
+                },
+                BindGroupEntry {
+                    binding: 2, // texture buffer
                     resource: BindingResource::TextureView(&texture_buffer.texture.create_view(
                         &TextureViewDescriptor {
                             label: Some("texture uberbuffer view"),
@@ -490,8 +527,12 @@ impl Wgpu {
                     )),
                 },
                 BindGroupEntry {
-                    binding: 2, // texture sampler
+                    binding: 3, // texture sampler
                     resource: BindingResource::Sampler(&sampler),
+                },
+                BindGroupEntry {
+                    binding: 4, // instance buffer
+                    resource: instance_buffer.buffer.as_entire_binding(),
                 },
             ],
         });
@@ -547,18 +588,6 @@ impl Wgpu {
         let mut render_pipelines = FnvHashMap::default();
         render_pipelines.insert(ShaderId::Mesh, (bind_group, render_pipeline));
 
-        let projection_buffer = device.create_buffer_init(&BufferInitDescriptor {
-            label: Some("projection buffer"),
-            contents: bytemuck::bytes_of(&Projection::from(&opts.projection)),
-            usage: BufferUsages::UNIFORM | BufferUsages::COPY_DST,
-        });
-
-        let view_buffer = device.create_buffer_init(&BufferInitDescriptor {
-            label: Some("view buffer"),
-            contents: bytemuck::bytes_of(&View::default()),
-            usage: BufferUsages::UNIFORM | BufferUsages::COPY_DST,
-        });
-
         Ok(Self {
             device,
             queue,
@@ -581,6 +610,9 @@ impl Wgpu {
             complete_textures: FnvHashSet::default(),
             texture_freelist: Vec::new(),
 
+            projection,
+            view_look_at,
+
             projection_buffer,
             view_buffer,
 
@@ -590,6 +622,16 @@ impl Wgpu {
             indirect_buffer,
             texture_buffer,
         })
+    }
+
+    #[inline]
+    pub fn set_projection(&mut self, projection: PerspectiveProjection) {
+        self.projection = projection.into();
+    }
+
+    #[inline]
+    pub fn set_camera(&mut self, camera: Camera) {
+        self.view_look_at = camera.into();
     }
 
     #[inline]
@@ -880,7 +922,7 @@ impl Wgpu {
 
     pub fn render_frame(&mut self) {
         let output = self.surface.get_current_texture().unwrap();
-        let output_view = output
+        let output_texture_view = output
             .texture
             .create_view(&TextureViewDescriptor::default());
 
@@ -894,7 +936,7 @@ impl Wgpu {
             let mut pass = encoder.begin_render_pass(&RenderPassDescriptor {
                 label: Some("main render pass"),
                 color_attachments: &[Some(RenderPassColorAttachment {
-                    view: &output_view,
+                    view: &output_texture_view,
                     resolve_target: None,
                     ops: Operations {
                         load: LoadOp::Clear(Color::BLUE),

@@ -15,7 +15,7 @@ pub use texture::*;
 
 use self::wgpu::WgpuInitOptions;
 
-#[derive(Default, Debug)]
+#[derive(Copy, Clone, Default, Debug)]
 pub struct PerspectiveProjection {
     pub fov: f32,
     pub aspect_ratio: f32,
@@ -23,9 +23,9 @@ pub struct PerspectiveProjection {
     pub far: f32,
 }
 
-impl From<&PerspectiveProjection> for Matrix4 {
+impl From<PerspectiveProjection> for Matrix4 {
     #[inline]
-    fn from(p: &PerspectiveProjection) -> Matrix4 {
+    fn from(p: PerspectiveProjection) -> Matrix4 {
         let depth = p.near - p.far;
         let tan_fov = (p.fov / 2.0).tan();
         Matrix4([
@@ -37,7 +37,7 @@ impl From<&PerspectiveProjection> for Matrix4 {
     }
 }
 
-#[derive(Debug)]
+#[derive(Copy, Clone, Default, Debug)]
 pub struct Camera {
     position: Vector3,
     euler_angles: Vector2,
@@ -98,6 +98,7 @@ pub struct GfxInitOptions<'a> {
     window_size: Vector2,
 
     projection: PerspectiveProjection,
+    camera: Camera,
 }
 
 impl<'a> Default for GfxInitOptions<'a> {
@@ -110,6 +111,10 @@ impl<'a> Default for GfxInitOptions<'a> {
                 aspect_ratio: 800.0 / 600.0,
                 near: 0.001,
                 far: 65535.0,
+            },
+            camera: Camera {
+                position: Vector3::new(-16.0, 8.0, -16.0),
+                euler_angles: Vector2::splat(0.0),
             },
         }
     }
@@ -140,6 +145,7 @@ impl Gfx {
             WgpuInitOptions {
                 window_size: opts.window_size,
                 projection: opts.projection,
+                camera: opts.camera,
             },
         )?;
 
