@@ -42,6 +42,9 @@ fn vertex_main(in: VertexInput) -> VertexOutput {
 @fragment
 fn fragment_main(in: VertexOutput) -> @location(0) vec4<f32> {
     let color = textureSample(textures, texture_sampler, in.tex_coord, 0);
+    if color.a == 0.0 {
+        discard;
+    }
     return color;
 }
 

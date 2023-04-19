@@ -8,15 +8,17 @@ use wgpu::{
     AdapterInfo, AddressMode, Backends, BindGroup, BindGroupDescriptor, BindGroupEntry,
     BindGroupLayoutDescriptor, BindGroupLayoutEntry, BindingResource, BindingType, BlendState,
     Buffer, BufferAddress, BufferBinding, BufferBindingType, BufferDescriptor, BufferUsages, Color,
-    ColorTargetState, ColorWrites, CommandEncoderDescriptor, Device, DeviceDescriptor, Extent3d,
-    Features, FilterMode, FragmentState, FrontFace, ImageCopyBuffer, ImageCopyTexture,
-    ImageDataLayout, IndexFormat, Instance, InstanceDescriptor, Limits, LoadOp, MultisampleState,
-    Operations, Origin3d, PipelineLayoutDescriptor, PolygonMode, PrimitiveState, PrimitiveTopology,
-    Queue, RenderPassColorAttachment, RenderPassDescriptor, RenderPipeline,
-    RenderPipelineDescriptor, RequestAdapterOptions, SamplerBindingType, SamplerDescriptor,
-    ShaderStages, Surface, SurfaceConfiguration, Texture as WgpuTexture, TextureAspect,
-    TextureDescriptor, TextureDimension, TextureFormat, TextureSampleType, TextureUsages,
-    TextureViewDescriptor, TextureViewDimension, VertexBufferLayout, VertexState, VertexStepMode,
+    ColorTargetState, ColorWrites, CommandEncoderDescriptor, CompareFunction, DepthBiasState,
+    DepthStencilState, Device, DeviceDescriptor, Extent3d, Features, FilterMode, FragmentState,
+    FrontFace, ImageCopyBuffer, ImageCopyTexture, ImageDataLayout, IndexFormat, Instance,
+    InstanceDescriptor, Limits, LoadOp, MultisampleState, Operations, Origin3d,
+    PipelineLayoutDescriptor, PolygonMode, PrimitiveState, PrimitiveTopology, Queue,
+    RenderPassColorAttachment, RenderPassDepthStencilAttachment, RenderPassDescriptor,
+    RenderPipeline, RenderPipelineDescriptor, RequestAdapterOptions, SamplerBindingType,
+    SamplerDescriptor, ShaderStages, StencilState, Surface, SurfaceConfiguration,
+    Texture as WgpuTexture, TextureAspect, TextureDescriptor, TextureDimension, TextureFormat,
+    TextureSampleType, TextureUsages, TextureView, TextureViewDescriptor, TextureViewDimension,
+    VertexBufferLayout, VertexState, VertexStepMode,
 };
 
 use crate::{
@@ -341,6 +343,7 @@ pub struct Wgpu {
     instance_buffer: InstanceBuffer,
     indirect_buffer: IndirectBuffer,
     texture_buffer: TextureBuffer,
+    depth_buffer: TextureView,
 }
 
 impl Wgpu {
@@ -405,8 +408,8 @@ impl Wgpu {
                 format: surface_format,
                 width: size.0,
                 height: size.1,
-                //present_mode: surface_caps.present_modes[0],
-                present_mode: wgpu::PresentMode::Immediate,
+                present_mode: surface_caps.present_modes[0],
+                //present_mode: wgpu::PresentMode::Immediate,
                 alpha_mode: surface_caps.alpha_modes[0],
                 view_formats: vec![],
             },
@@ -417,6 +420,25 @@ impl Wgpu {
         let instance_buffer = InstanceBuffer::new(&device);
         let indirect_buffer = IndirectBuffer::new(&device);
         let texture_buffer = TextureBuffer::new(&device);
+        let depth_buffer = device
+            .create_texture(&TextureDescriptor {
+                label: Some("depth buffer"),
+                size: Extent3d {
+                    width: size.0,
+                    height: size.1,
+                    depth_or_array_layers: 1,
+                },
+                mip_level_count: 1,
+                sample_count: 1,
+                dimension: TextureDimension::D2,
+                format: TextureFormat::Depth32Float,
+                usage: TextureUsages::RENDER_ATTACHMENT,
+                view_formats: &[],
+            })
+            .create_view(&TextureViewDescriptor {
+                aspect: TextureAspect::DepthOnly,
+                ..Default::default()
+            });
 
         let projection = Projection::from(opts.projection);
         let projection_buffer = device.create_buffer_init(&BufferInitDescriptor {
@@ -576,7 +598,13 @@ impl Wgpu {
                 unclipped_depth: false,
                 conservative: false,
             },
-            depth_stencil: None,
+            depth_stencil: Some(DepthStencilState {
+                format: TextureFormat::Depth32Float,
+                depth_write_enabled: true,
+                depth_compare: CompareFunction::Less,
+                stencil: StencilState::default(),
+                bias: DepthBiasState::default(),
+            }),
             multisample: MultisampleState {
                 count: 1,
                 mask: !0,
@@ -621,6 +649,7 @@ impl Wgpu {
             instance_buffer,
             indirect_buffer,
             texture_buffer,
+            depth_buffer,
         })
     }
 
@@ -632,6 +661,11 @@ impl Wgpu {
     #[inline]
     pub fn set_camera(&mut self, camera: Camera) {
         self.view_look_at = camera.into();
+        self.queue.write_buffer(
+            &self.view_buffer,
+            0,
+            bytemuck::bytes_of(&self.view_look_at.view),
+        );
     }
 
     #[inline]
@@ -943,7 +977,14 @@ impl Wgpu {
                         store: true,
                     },
                 })],
-                depth_stencil_attachment: None,
+                depth_stencil_attachment: Some(RenderPassDepthStencilAttachment {
+                    view: &self.depth_buffer,
+                    depth_ops: Some(Operations {
+                        load: LoadOp::Clear(1.0),
+                        store: true,
+                    }),
+                    stencil_ops: None,
+                }),
             });
 
             let (bind_group, render_pipeline) = self.render_pipelines.get(&ShaderId::Mesh).unwrap();
