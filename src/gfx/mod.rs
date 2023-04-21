@@ -26,14 +26,7 @@ pub struct PerspectiveProjection {
 impl From<PerspectiveProjection> for Matrix4 {
     #[inline]
     fn from(p: PerspectiveProjection) -> Matrix4 {
-        let depth = p.near - p.far;
-        let tan_fov = (p.fov / 2.0).tan();
-        Matrix4([
-            Vector4([1.0 / (tan_fov * p.aspect_ratio), 0.0, 0.0, 0.0]),
-            Vector4([0.0, 1.0 / tan_fov, 0.0, 0.0]),
-            Vector4([0.0, 0.0, (p.near + p.far) / depth, -1.0]),
-            Vector4([0.0, 0.0, (2.0 * p.far * p.near) / depth, 0.0]),
-        ])
+        Matrix4::perspective(p.fov, p.aspect_ratio, p.near, p.far)
     }
 }
 
@@ -163,17 +156,17 @@ impl Gfx {
 
         mesh.push_vertices(&[
             Vertex {
-                position: Vector3::new(0.0, 0.5, 0.0) * 8.0,
+                position: Vector3::new(0.0, 0.5, 0.0) * 2.0,
                 tex_coord: Vector2::new(0.5, 0.0),
                 ..Default::default()
             },
             Vertex {
-                position: Vector3::new(0.5, -0.5, 0.0) * 8.0,
+                position: Vector3::new(0.5, -0.5, 0.0) * 2.0,
                 tex_coord: Vector2::new(1.0, 1.0),
                 ..Default::default()
             },
             Vertex {
-                position: Vector3::new(-0.5, -0.5, 0.0) * 8.0,
+                position: Vector3::new(-0.5, -0.5, 0.0) * 2.0,
                 tex_coord: Vector2::new(0.0, 1.0),
                 ..Default::default()
             },
@@ -203,15 +196,9 @@ impl Gfx {
 
     #[inline]
     pub fn tick(&mut self) {
-        let Camera {
-            position,
-            euler_angles,
-        } = self.camera;
-        let euler_angles = euler_angles + Vector2::new(0.0, 0.1);
-        self.wgpu.set_camera(Camera {
-            position,
-            euler_angles,
-        });
+        self.camera.euler_angles = self.camera.euler_angles + Vector2::new(0.0, 0.2);
+        self.wgpu.set_camera(self.camera);
+        self.wgpu.set_projection(self.projection);
         self.wgpu.tick();
         self.wgpu.render_frame();
     }

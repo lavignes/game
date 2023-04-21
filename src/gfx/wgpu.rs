@@ -479,17 +479,17 @@ impl Wgpu {
                     ty: BindingType::Buffer {
                         ty: BufferBindingType::Uniform,
                         has_dynamic_offset: false,
-                        min_binding_size: None,
+                        min_binding_size: None, // TODO: not optimal
                     },
                     count: None,
                 },
                 BindGroupLayoutEntry {
                     binding: 1, // view buffer
-                    visibility: ShaderStages::VERTEX,
+                    visibility: ShaderStages::VERTEX_FRAGMENT,
                     ty: BindingType::Buffer {
                         ty: BufferBindingType::Uniform,
                         has_dynamic_offset: false,
-                        min_binding_size: None,
+                        min_binding_size: None, // TODO: not optimal
                     },
                     count: None,
                 },
@@ -574,9 +574,9 @@ impl Wgpu {
                     array_stride: mem::size_of::<Vertex>() as BufferAddress,
                     step_mode: VertexStepMode::Vertex,
                     attributes: &wgpu::vertex_attr_array![
-                        0 => Float32x3,
-                        1 => Float32x3,
-                        2 => Float32x2,
+                        0 => Float32x3, // position
+                        1 => Float32x3, // normal
+                        2 => Float32x2, // tex_coord
                     ],
                 }],
             },
@@ -655,16 +655,27 @@ impl Wgpu {
 
     #[inline]
     pub fn set_projection(&mut self, projection: PerspectiveProjection) {
-        self.projection = projection.into();
+        //self.projection = projection.into();
+        self.projection.0 = Matrix4::orthographic(-1.0, -1.0, 1.0, 1.0, -1.0, 1.0);
+        self.queue.write_buffer(
+            &self.projection_buffer,
+            0,
+            bytemuck::bytes_of(&self.projection),
+        );
     }
 
     #[inline]
     pub fn set_camera(&mut self, camera: Camera) {
         self.view_look_at = camera.into();
+        //self.queue.write_buffer(
+        //    &self.view_buffer,
+        //    0,
+        //    bytemuck::bytes_of(&self.view_look_at.view),
+        //);
         self.queue.write_buffer(
             &self.view_buffer,
             0,
-            bytemuck::bytes_of(&self.view_look_at.view),
+            bytemuck::bytes_of(&Matrix4::rotate_forward(camera.euler_angles.y())),
         );
     }
 
