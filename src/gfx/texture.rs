@@ -9,6 +9,8 @@ use crate::{math::Vector2, util};
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]
 pub enum TextureFormat {
     Dxt1,
+    Dxt3,
+    Dxt5,
 }
 
 #[derive(Debug, Default)]
@@ -190,6 +192,14 @@ impl DDSReader {
                 "DXT1" => {
                     texture.format = TextureFormat::Dxt1;
                     block_size = 8;
+                }
+                "DXT3" => {
+                    texture.format = TextureFormat::Dxt3;
+                    block_size = 16;
+                }
+                "DXT5" => {
+                    texture.format = TextureFormat::Dxt5;
+                    block_size = 16;
                 }
                 _ => {
                     return util::io_err(

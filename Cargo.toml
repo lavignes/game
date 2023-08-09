@@ -7,20 +7,20 @@ edition = "2021"
 futures = { version = "0.3", features = ["thread-pool"] }
 bytemuck = "1"
 bitflags = "2"
-
 static_assertions = "1"
 
 thiserror = "1"
 anyhow = "1"
 
-log = "0.4"
-env_logger = "0.10"
+clap = { version = "4", features = ["derive"] }
 
-fnv = "1"
+tracing = { version = "0.1", features = ["max_level_debug", "release_max_level_warn"] }
+log = { version = "0.4", features = ["max_level_debug", "release_max_level_warn"] }
+tracing-subscriber = "0.3"
 
 bincode = "2.0.0-rc.1"
 bincode_derive = "2.0.0-rc.1"
 
-wgpu = "0.15.1"
+wgpu = "0.17.0"
 sdl2 = { git = "https://github.com/Rust-SDL2/rust-sdl2.git", features = ["bundled", "raw-window-handle"] }
 raw-window-handle = "0.5"

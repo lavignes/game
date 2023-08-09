@@ -27,13 +27,6 @@ struct VertexOutput {
 
 @vertex
 fn vertex_main(in: VertexInput) -> VertexOutput {
-    let vm = mat4x4<f32>(
-        vec4<f32>(0.2, -0.2, 0.0, 0.0),
-        vec4<f32>(0.2, 0.2, 0.0, 0.0),
-        vec4<f32>(0.0, 0.0, 1.0, 0.0),
-        vec4<f32>(0.0, 0.0, 0.0, 1.0),
-    );
-
     // TODO: model * vec4<f32>(in.position, 1.0);
     let world_position = vec4<f32>(in.position, 1.0);
     //let clip_position = projection.matrix * view.matrix * world_position;
@@ -48,10 +41,6 @@ fn vertex_main(in: VertexInput) -> VertexOutput {
 
 @fragment
 fn fragment_main(in: VertexOutput) -> @location(0) vec4<f32> {
-    let color = textureSample(textures, texture_sampler, in.tex_coord, 0);
-    if color.a == 0.0 {
-        discard;
-    }
-    return color;
+    return textureSample(textures, texture_sampler, in.tex_coord, 0);
 }
 

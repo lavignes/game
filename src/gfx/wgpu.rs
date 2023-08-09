@@ -1,13 +1,12 @@
 use std::{cmp::Ordering, collections::BinaryHeap, mem, num::NonZeroU32, ops::Range};
 
-use fnv::{FnvHashMap, FnvHashSet};
 use futures::executor;
 use raw_window_handle::{HasRawDisplayHandle, HasRawWindowHandle};
 use wgpu::{
     util::{BufferInitDescriptor, DeviceExt},
     AdapterInfo, AddressMode, Backends, BindGroup, BindGroupDescriptor, BindGroupEntry,
     BindGroupLayoutDescriptor, BindGroupLayoutEntry, BindingResource, BindingType, BlendState,
-    Buffer, BufferAddress, BufferBinding, BufferBindingType, BufferDescriptor, BufferUsages, Color,
+    Buffer, BufferAddress, BufferBindingType, BufferDescriptor, BufferUsages, Color,
     ColorTargetState, ColorWrites, CommandEncoderDescriptor, CompareFunction, DepthBiasState,
     DepthStencilState, Device, DeviceDescriptor, Extent3d, Features, FilterMode, FragmentState,
     FrontFace, ImageCopyBuffer, ImageCopyTexture, ImageDataLayout, IndexFormat, Instance,
@@ -18,17 +17,14 @@ use wgpu::{
     SamplerDescriptor, ShaderStages, StencilState, Surface, SurfaceConfiguration,
     Texture as WgpuTexture, TextureAspect, TextureDescriptor, TextureDimension, TextureFormat,
     TextureSampleType, TextureUsages, TextureView, TextureViewDescriptor, TextureViewDimension,
-    VertexBufferLayout, VertexState, VertexStepMode,
+    VertexBufferLayout, VertexState, VertexStepMode, COPY_BUFFER_ALIGNMENT,
 };
 
 use crate::{
     gfx::{Camera, Mesh, PerspectiveProjection, Texture, Vertex},
     math::{Matrix4, Quaternion, Vector2, Vector3},
+    util::{FastHashMap, FastHashSet},
 };
-
-const TEXTURE_WIDTH: u32 = 256;
-const TEXTURE_HEIGHT: u32 = 256;
-const TEXTURE_LAYERS: u32 = 256;
 
 #[derive(Copy, Clone, Debug, Eq, PartialEq, Hash)]
 pub struct MeshId(usize);
@@ -94,149 +90,93 @@ impl PartialEq for UploadJob {
     }
 }
 
-struct VertexBuffer {
+struct UberDataBuffer<I> {
     buffer: Buffer,
     staging_buffer: Buffer,
     freelist: Vec<Range<usize>>,
-    offsets: FnvHashMap<MeshId, Range<usize>>,
+    offsets: FastHashMap<I, Range<usize>>,
 }
 
-impl VertexBuffer {
+#[derive(Debug)]
+struct UberDataBufferDescriptor<'a> {
+    device: &'a Device,
+    name: &'static str,
+    size: usize,
+    staging_name: &'static str,
+    staging_size: usize,
+    usage: BufferUsages,
+}
+
+impl<I> UberDataBuffer<I> {
     #[inline]
-    fn new(device: &Device) -> Self {
-        let buffer = device.create_buffer(&BufferDescriptor {
-            label: Some("vertex uberbuffer"),
-            size: 64 * 1024 * 1024,
-            usage: BufferUsages::VERTEX | BufferUsages::COPY_DST,
+    fn new(desc: &UberDataBufferDescriptor) -> Self {
+        let buffer = desc.device.create_buffer(&BufferDescriptor {
+            label: Some(desc.name),
+            size: desc.size as u64,
+            usage: desc.usage | BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
-        let staging_buffer = device.create_buffer(&BufferDescriptor {
-            label: Some("vertex staging buffer"),
-            size: 4 * 1024,
+        let staging_buffer = desc.device.create_buffer(&BufferDescriptor {
+            label: Some(desc.staging_name),
+            size: desc.staging_size as u64,
             usage: BufferUsages::COPY_SRC | BufferUsages::MAP_WRITE,
             mapped_at_creation: true,
         });
         Self {
             staging_buffer,
             freelist: vec![0..buffer.size() as usize],
-            offsets: FnvHashMap::default(),
+            offsets: FastHashMap::default(),
             buffer,
         }
     }
 }
 
-struct IndexBuffer {
-    buffer: Buffer,
-    staging_buffer: Buffer,
-    freelist: Vec<Range<usize>>,
-    offsets: FnvHashMap<MeshId, Range<usize>>,
-}
-
-impl IndexBuffer {
-    #[inline]
-    fn new(device: &Device) -> Self {
-        let buffer = device.create_buffer(&BufferDescriptor {
-            label: Some("index uberbuffer"),
-            size: 32 * 1024 * 1024,
-            usage: BufferUsages::INDEX | BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
-        let staging_buffer = device.create_buffer(&BufferDescriptor {
-            label: Some("vertex staging buffer"),
-            size: 4 * 1024,
-            usage: BufferUsages::COPY_SRC | BufferUsages::MAP_WRITE,
-            mapped_at_creation: true,
-        });
-        Self {
-            staging_buffer,
-            freelist: vec![0..buffer.size() as usize],
-            offsets: FnvHashMap::default(),
-            buffer,
-        }
-    }
-}
-
-struct InstanceBuffer {
-    buffer: Buffer,
-    freelist: Vec<Range<usize>>,
-    offsets: FnvHashMap<InstanceId, Range<usize>>,
-}
-
-impl InstanceBuffer {
-    #[inline]
-    fn new(device: &Device) -> Self {
-        let buffer = device.create_buffer(&BufferDescriptor {
-            label: Some("instance uberbuffer"),
-            size: 32 * 1024,
-            usage: BufferUsages::STORAGE | BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
-        Self {
-            freelist: vec![0..buffer.size() as usize],
-            offsets: FnvHashMap::default(),
-            buffer,
-        }
-    }
-}
-
-struct IndirectBuffer {
-    buffer: Buffer,
-    freelist: Vec<Range<usize>>,
-    offsets: FnvHashMap<InstanceId, Range<usize>>,
-}
-
-impl IndirectBuffer {
-    #[inline]
-    fn new(device: &Device) -> Self {
-        let buffer = device.create_buffer(&BufferDescriptor {
-            label: Some("indirect uberbuffer"),
-            size: 1024 * 1024,
-            usage: BufferUsages::INDIRECT | BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
-        Self {
-            freelist: vec![0..buffer.size() as usize],
-            offsets: FnvHashMap::default(),
-            buffer,
-        }
-    }
-}
-
-struct TextureBuffer {
+struct UberTextureBuffer {
     texture: WgpuTexture,
     staging_buffer: Buffer,
     freelist: Vec<Range<usize>>,
-    offsets: FnvHashMap<TextureId, usize>,
+    offsets: FastHashMap<TextureId, usize>,
 }
 
-impl TextureBuffer {
+#[derive(Debug)]
+struct UberTextureBufferDescriptor<'a> {
+    device: &'a Device,
+    name: &'static str,
+    width: usize,
+    height: usize,
+    layers: usize,
+    staging_name: &'static str,
+    format: TextureFormat,
+}
+
+impl UberTextureBuffer {
     #[inline]
-    fn new(device: &Device) -> Self {
-        let texture = device.create_texture(&TextureDescriptor {
-            label: Some("texture uberbuffer"),
+    fn new(desc: &UberTextureBufferDescriptor) -> Self {
+        let texture = desc.device.create_texture(&TextureDescriptor {
+            label: Some(desc.name),
             size: Extent3d {
-                width: TEXTURE_WIDTH,
-                height: TEXTURE_HEIGHT,
-                depth_or_array_layers: TEXTURE_LAYERS,
+                width: desc.width as u32,
+                height: desc.height as u32,
+                depth_or_array_layers: desc.layers as u32,
             },
-            mip_level_count: 1,
+            mip_level_count: 1, // TODO: mips and sample count
             sample_count: 1,
             dimension: TextureDimension::D2,
-            format: TextureFormat::Bc1RgbaUnormSrgb, // i.e. DXT1 SRGB
+            format: desc.format,
             usage: TextureUsages::COPY_DST | TextureUsages::TEXTURE_BINDING,
             view_formats: &[],
         });
-        let staging_buffer = device.create_buffer(&BufferDescriptor {
-            label: Some("texture staging buffer"),
-            size: 1024 * 1024,
+        let staging_buffer = desc.device.create_buffer(&BufferDescriptor {
+            label: Some(desc.staging_name),
+            size: 1024 * 1024, // TODO: compute?
             usage: BufferUsages::COPY_SRC | BufferUsages::MAP_WRITE,
             mapped_at_creation: true,
         });
         Self {
             texture,
             staging_buffer,
-            freelist: vec![0..TEXTURE_LAYERS as usize],
-            offsets: FnvHashMap::default(),
+            freelist: vec![0..desc.layers],
+            offsets: FastHashMap::default(),
         }
     }
 }
@@ -313,7 +253,7 @@ pub struct WgpuInitOptions {
 pub struct Wgpu {
     device: Device,
     queue: Queue,
-    render_pipelines: FnvHashMap<ShaderId, (BindGroup, RenderPipeline)>,
+    render_pipelines: FastHashMap<ShaderId, (BindGroup, RenderPipeline)>,
 
     mesh_id_counter: usize,
     instance_id_counter: usize,
@@ -324,12 +264,12 @@ pub struct Wgpu {
     pending_upload_jobs: BinaryHeap<UploadJob>,
     current_upload_job: Option<UploadJob>,
 
-    uploading_meshes: FnvHashMap<MeshId, Mesh>,
-    complete_meshes: FnvHashSet<MeshId>,
+    uploading_meshes: FastHashMap<MeshId, Mesh>,
+    complete_meshes: FastHashSet<MeshId>,
     mesh_freelist: Vec<Mesh>,
 
-    uploading_textures: FnvHashMap<TextureId, Texture>,
-    complete_textures: FnvHashSet<TextureId>,
+    uploading_textures: FastHashMap<TextureId, Texture>,
+    complete_textures: FastHashSet<TextureId>,
     texture_freelist: Vec<Texture>,
 
     projection: Projection,
@@ -338,11 +278,11 @@ pub struct Wgpu {
     view_look_at: ViewLookAt,
     view_buffer: Buffer,
 
-    vertex_buffer: VertexBuffer,
-    index_buffer: IndexBuffer,
-    instance_buffer: InstanceBuffer,
-    indirect_buffer: IndirectBuffer,
-    texture_buffer: TextureBuffer,
+    vertex_buffer: UberDataBuffer<MeshId>,
+    index_buffer: UberDataBuffer<MeshId>,
+    instance_buffer: UberDataBuffer<InstanceId>,
+    indirect_buffer: UberDataBuffer<InstanceId>,
+    texture_buffer: UberTextureBuffer,
     depth_buffer: TextureView,
 }
 
@@ -370,9 +310,9 @@ impl Wgpu {
         })?;
 
         let AdapterInfo { name, backend, .. } = adapter.get_info();
-        log::debug!("Using adapter: \"{name}\" with {backend:?} backend");
-        log::debug!("Adapter features: {:?}", adapter.features());
-        log::debug!("Adapter limits: {:?}", adapter.limits());
+        tracing::debug!("Using adapter: \"{name}\" with {backend:?} backend");
+        tracing::debug!("Adapter features: {:?}", adapter.features());
+        tracing::debug!("Adapter limits: {:?}", adapter.limits());
 
         let (device, queue) = executor::block_on(adapter.request_device(
             &DeviceDescriptor {
@@ -389,16 +329,16 @@ impl Wgpu {
         })?;
 
         let surface_caps = surface.get_capabilities(&adapter);
-        log::debug!("Surface caps: {:?}", surface_caps);
+        tracing::debug!("Surface caps: {:?}", surface_caps);
 
         let surface_format = surface_caps
             .formats
             .iter()
             .cloned()
-            .filter(|f| f.describe().srgb)
+            .filter(TextureFormat::is_srgb)
             .next()
             .unwrap_or(surface_caps.formats[0]);
-        log::debug!("Surface format: {surface_format:?}");
+        tracing::debug!("Surface format: {surface_format:?}");
 
         let size: (u32, u32) = opts.window_size.into();
         surface.configure(
@@ -415,11 +355,48 @@ impl Wgpu {
             },
         );
 
-        let vertex_buffer = VertexBuffer::new(&device);
-        let index_buffer = IndexBuffer::new(&device);
-        let instance_buffer = InstanceBuffer::new(&device);
-        let indirect_buffer = IndirectBuffer::new(&device);
-        let texture_buffer = TextureBuffer::new(&device);
+        let vertex_buffer = UberDataBuffer::new(&UberDataBufferDescriptor {
+            device: &device,
+            name: "vertex uberbuffer",
+            size: 64 * 1024 * 1024,
+            staging_name: "vertex staging buffer",
+            staging_size: 1024 * 1024,
+            usage: BufferUsages::VERTEX,
+        });
+        let index_buffer = UberDataBuffer::new(&UberDataBufferDescriptor {
+            device: &device,
+            name: "index uberbuffer",
+            size: 32 * 1024 * 1024,
+            staging_name: "index staging buffer",
+            staging_size: 4 * 1024,
+            usage: BufferUsages::INDEX,
+        });
+        let instance_buffer = UberDataBuffer::new(&UberDataBufferDescriptor {
+            device: &device,
+            name: "instance uberbuffer",
+            size: 32 * 1024,
+            staging_name: "instance staging buffer",
+            staging_size: 0,
+            usage: BufferUsages::STORAGE,
+        });
+        let indirect_buffer = UberDataBuffer::new(&UberDataBufferDescriptor {
+            device: &device,
+            name: "indirect uberbuffer",
+            size: 1024 * 1024,
+            staging_name: "indirect staging buffer",
+            staging_size: 0,
+            usage: BufferUsages::INDIRECT,
+        });
+        let texture_buffer = UberTextureBuffer::new(&UberTextureBufferDescriptor {
+            device: &device,
+            name: "texture uberbuffer",
+            width: 256,
+            height: 256,
+            layers: 256,
+            staging_name: "texture staging buffer",
+            format: TextureFormat::Bc3RgbaUnormSrgb,
+        });
+
         let depth_buffer = device
             .create_texture(&TextureDescriptor {
                 label: Some("depth buffer"),
@@ -428,7 +405,7 @@ impl Wgpu {
                     height: size.1,
                     depth_or_array_layers: 1,
                 },
-                mip_level_count: 1,
+                mip_level_count: 1, // TODO: mip levels
                 sample_count: 1,
                 dimension: TextureDimension::D2,
                 format: TextureFormat::Depth32Float,
@@ -457,17 +434,17 @@ impl Wgpu {
         let shader = device.create_shader_module(wgpu::include_wgsl!("shader.wgsl"));
 
         let sampler = device.create_sampler(&SamplerDescriptor {
-            label: Some("basic sampler"),
+            label: Some("linear sampler"),
             address_mode_u: AddressMode::Repeat,
             address_mode_v: AddressMode::Repeat,
             address_mode_w: AddressMode::Repeat,
-            mag_filter: FilterMode::Nearest,
-            min_filter: FilterMode::Nearest,
-            mipmap_filter: FilterMode::Nearest,
+            mag_filter: FilterMode::Linear,
+            min_filter: FilterMode::Linear,
+            mipmap_filter: FilterMode::Linear,
             lod_min_clamp: 0.0,
             lod_max_clamp: 1.0,
             compare: None,
-            anisotropy_clamp: None,
+            anisotropy_clamp: 1, // TODO: wat do?
             border_color: None,
         });
         let bind_group_layout = device.create_bind_group_layout(&BindGroupLayoutDescriptor {
@@ -497,7 +474,7 @@ impl Wgpu {
                     binding: 2, // texture buffer
                     visibility: ShaderStages::FRAGMENT,
                     ty: BindingType::Texture {
-                        sample_type: TextureSampleType::Float { filterable: false },
+                        sample_type: TextureSampleType::Float { filterable: true },
                         view_dimension: TextureViewDimension::D2Array,
                         multisampled: false,
                     },
@@ -506,7 +483,7 @@ impl Wgpu {
                 BindGroupLayoutEntry {
                     binding: 3, // texture sampler
                     visibility: ShaderStages::FRAGMENT,
-                    ty: BindingType::Sampler(SamplerBindingType::NonFiltering {}),
+                    ty: BindingType::Sampler(SamplerBindingType::Filtering),
                     count: None,
                 },
                 BindGroupLayoutEntry {
@@ -538,13 +515,13 @@ impl Wgpu {
                     resource: BindingResource::TextureView(&texture_buffer.texture.create_view(
                         &TextureViewDescriptor {
                             label: Some("texture uberbuffer view"),
-                            format: Some(TextureFormat::Bc1RgbaUnormSrgb),
+                            format: Some(TextureFormat::Bc3RgbaUnormSrgb),
                             dimension: Some(TextureViewDimension::D2Array),
                             aspect: TextureAspect::All,
                             base_mip_level: 0,
-                            mip_level_count: NonZeroU32::new(1),
+                            mip_level_count: None,
                             base_array_layer: 0,
-                            array_layer_count: NonZeroU32::new(TEXTURE_LAYERS),
+                            array_layer_count: None,
                         },
                     )),
                 },
@@ -585,7 +562,7 @@ impl Wgpu {
                 entry_point: "fragment_main",
                 targets: &[Some(ColorTargetState {
                     format: surface_format,
-                    blend: Some(BlendState::REPLACE),
+                    blend: Some(BlendState::ALPHA_BLENDING),
                     write_mask: ColorWrites::ALL,
                 })],
             }),
@@ -613,7 +590,7 @@ impl Wgpu {
             multiview: None,
         });
 
-        let mut render_pipelines = FnvHashMap::default();
+        let mut render_pipelines = FastHashMap::default();
         render_pipelines.insert(ShaderId::Mesh, (bind_group, render_pipeline));
 
         Ok(Self {
@@ -630,12 +607,12 @@ impl Wgpu {
             pending_upload_jobs: BinaryHeap::new(),
             current_upload_job: None,
 
-            uploading_meshes: FnvHashMap::default(),
-            complete_meshes: FnvHashSet::default(),
+            uploading_meshes: FastHashMap::default(),
+            complete_meshes: FastHashSet::default(),
             mesh_freelist: Vec::new(),
 
-            uploading_textures: FnvHashMap::default(),
-            complete_textures: FnvHashSet::default(),
+            uploading_textures: FastHashMap::default(),
+            complete_textures: FastHashSet::default(),
             texture_freelist: Vec::new(),
 
             projection,
@@ -810,6 +787,7 @@ impl Wgpu {
                 dst_vertex_offset,
                 dst_index_offset,
             }) => {
+                // TODO: factor into methods of the buffer structs
                 let mesh = self.uploading_meshes.get(&id).unwrap();
 
                 let vertices_bytes = &bytemuck::cast_slice(mesh.vertices());
@@ -818,7 +796,7 @@ impl Wgpu {
                     vertices_bytes_remaining.min(self.vertex_buffer.staging_buffer.size() as usize);
 
                 if vertices_copy_size != 0 {
-                    log::debug!("Uploading {vertices_copy_size} vertex bytes for {id:?}");
+                    tracing::debug!("Uploading {vertices_copy_size} vertex bytes for {id:?}");
                     let vertices_bytes = &vertices_bytes
                         [src_vertex_offset..(src_vertex_offset + vertices_copy_size)];
                     {
@@ -846,7 +824,7 @@ impl Wgpu {
                     indices_bytes_remaining.min(self.index_buffer.staging_buffer.size() as usize);
 
                 if indices_copy_size != 0 {
-                    log::debug!("Uploading {indices_copy_size} index bytes for {id:?}");
+                    tracing::debug!("Uploading {indices_copy_size} index bytes for {id:?}");
                     let indices_bytes =
                         &indices_bytes[src_index_offset..(src_index_offset + indices_copy_size)];
                     {
@@ -871,7 +849,7 @@ impl Wgpu {
                 if indices_copy_size == indices_bytes_remaining
                     && vertices_copy_size == vertices_bytes_remaining
                 {
-                    log::debug!(
+                    tracing::debug!(
                         "Finished uploading {id:?}. ({} vertex bytes, {} index bytes)",
                         vertices_bytes.len(),
                         indices_bytes.len()
@@ -905,7 +883,7 @@ impl Wgpu {
                     texture_bytes_remaining.min(self.texture_buffer.staging_buffer.size() as usize);
 
                 if texture_copy_size != 0 {
-                    log::debug!("Uploading {texture_copy_size} bytes for {id:?}");
+                    tracing::debug!("Uploading {texture_copy_size} bytes for {id:?}");
                     let texture_bytes = &mip.data()[src_offset..(src_offset + texture_copy_size)];
                     {
                         let mut view = self
@@ -925,13 +903,13 @@ impl Wgpu {
                             buffer: &self.texture_buffer.staging_buffer,
                             layout: ImageDataLayout {
                                 offset: 0,
-                                bytes_per_row: NonZeroU32::new(mip.bytes_per_row() as u32),
-                                rows_per_image: NonZeroU32::new(TEXTURE_HEIGHT),
+                                bytes_per_row: Some(mip.bytes_per_row() as u32),
+                                rows_per_image: Some(mip.size().y() as u32),
                             },
                         },
                         ImageCopyTexture {
                             texture: &self.texture_buffer.texture,
-                            mip_level: 0,
+                            mip_level: 0, // TODO: mip levels
                             origin: Origin3d {
                                 x: 0,
                                 y: 0,
@@ -940,15 +918,15 @@ impl Wgpu {
                             aspect: TextureAspect::All,
                         },
                         Extent3d {
-                            width: TEXTURE_WIDTH,
-                            height: TEXTURE_HEIGHT,
+                            width: mip.size().x() as u32,
+                            height: mip.size().y() as u32,
                             depth_or_array_layers: 1,
                         },
                     );
                 }
 
                 if texture_copy_size == texture_bytes_remaining {
-                    log::debug!("Finished uploading {id:?}. ({} bytes)", mip.data().len());
+                    tracing::debug!("Finished uploading {id:?}. ({} bytes)", mip.data().len());
                     self.current_upload_job = None;
                     self.complete_textures.insert(id);
                 } else {

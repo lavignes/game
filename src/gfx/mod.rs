@@ -196,7 +196,7 @@ impl Gfx {
 
     #[inline]
     pub fn tick(&mut self) {
-        self.camera.euler_angles = self.camera.euler_angles + Vector2::new(0.0, 0.2);
+        //self.camera.euler_angles = self.camera.euler_angles + Vector2::new(0.0, 0.2);
         self.wgpu.set_camera(self.camera);
         self.wgpu.set_projection(self.projection);
         self.wgpu.tick();
