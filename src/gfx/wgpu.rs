@@ -1,25 +1,35 @@
-use std::{cmp::Ordering, collections::BinaryHeap, mem, num::NonZeroU32, ops::Range};
+use std::{
+    cmp::Ordering,
+    collections::BinaryHeap,
+    mem,
+    ops::Range,
+    sync::{
+        mpsc::{self, Receiver, Sender},
+        Arc,
+    },
+};
 
 use futures::executor;
 use raw_window_handle::{HasRawDisplayHandle, HasRawWindowHandle};
 use wgpu::{
-    util::{BufferInitDescriptor, DeviceExt},
+    util::{align_to, BufferInitDescriptor, DeviceExt},
     AdapterInfo, AddressMode, Backends, BindGroup, BindGroupDescriptor, BindGroupEntry,
     BindGroupLayoutDescriptor, BindGroupLayoutEntry, BindingResource, BindingType, BlendState,
-    Buffer, BufferAddress, BufferBindingType, BufferDescriptor, BufferUsages, Color,
-    ColorTargetState, ColorWrites, CommandEncoderDescriptor, CompareFunction, DepthBiasState,
-    DepthStencilState, Device, DeviceDescriptor, Extent3d, Features, FilterMode, FragmentState,
-    FrontFace, ImageCopyBuffer, ImageCopyTexture, ImageDataLayout, IndexFormat, Instance,
-    InstanceDescriptor, Limits, LoadOp, MultisampleState, Operations, Origin3d,
-    PipelineLayoutDescriptor, PolygonMode, PrimitiveState, PrimitiveTopology, Queue,
+    Buffer, BufferAddress, BufferBindingType, BufferDescriptor, BufferUsages, BufferViewMut, Color,
+    ColorTargetState, ColorWrites, CommandEncoder, CommandEncoderDescriptor, CompareFunction,
+    DepthBiasState, DepthStencilState, Device, DeviceDescriptor, Extent3d, Features, FilterMode,
+    FragmentState, FrontFace, ImageCopyBuffer, ImageCopyTexture, ImageDataLayout, IndexFormat,
+    Instance, InstanceDescriptor, Limits, LoadOp, MapMode, MultisampleState, Operations, Origin3d,
+    PipelineLayoutDescriptor, PolygonMode, PresentMode, PrimitiveState, PrimitiveTopology, Queue,
     RenderPassColorAttachment, RenderPassDepthStencilAttachment, RenderPassDescriptor,
     RenderPipeline, RenderPipelineDescriptor, RequestAdapterOptions, SamplerBindingType,
     SamplerDescriptor, ShaderStages, StencilState, Surface, SurfaceConfiguration,
     Texture as WgpuTexture, TextureAspect, TextureDescriptor, TextureDimension, TextureFormat,
     TextureSampleType, TextureUsages, TextureView, TextureViewDescriptor, TextureViewDimension,
-    VertexBufferLayout, VertexState, VertexStepMode, COPY_BUFFER_ALIGNMENT,
+    VertexBufferLayout, VertexState, VertexStepMode,
 };
 
+use super::MipLevel;
 use crate::{
     gfx::{Camera, Mesh, PerspectiveProjection, Texture, Vertex},
     math::{Matrix4, Quaternion, Vector2, Vector3},
@@ -90,9 +100,175 @@ impl PartialEq for UploadJob {
     }
 }
 
+struct Chunk {
+    buffer: Arc<Buffer>,
+    used_offset: usize,
+}
+
+struct BufferStreamer {
+    chunk_size: usize,
+    chunk_name: &'static str,
+
+    mapped_chunks: Vec<Chunk>,
+    unmapped_chunks: Vec<Chunk>,
+    free_chunks: Vec<Chunk>,
+
+    tx: Sender<Chunk>,
+    rx: Receiver<Chunk>,
+}
+
+impl BufferStreamer {
+    fn new(chunk_size: usize, chunk_name: &'static str) -> Self {
+        let (tx, rx) = mpsc::channel();
+        Self {
+            chunk_size,
+            chunk_name,
+            mapped_chunks: Vec::new(),
+            unmapped_chunks: Vec::new(),
+            free_chunks: Vec::new(),
+            tx,
+            rx,
+        }
+    }
+
+    fn stream_mip(
+        &mut self,
+        device: &Device,
+        encoder: &mut CommandEncoder,
+        target: &WgpuTexture,
+        layer: usize,
+        mip: &MipLevel,
+    ) -> BufferViewMut {
+        let size = mip.data().len();
+        let chunk = self.remove_mapped_chunk(device, size);
+
+        let (width, height) = mip.size();
+        encoder.copy_buffer_to_texture(
+            ImageCopyBuffer {
+                buffer: &chunk.buffer,
+                layout: ImageDataLayout {
+                    offset: 0,
+                    bytes_per_row: Some(mip.bytes_per_row() as u32),
+                    rows_per_image: Some(width as u32),
+                },
+            },
+            ImageCopyTexture {
+                texture: &target,
+                mip_level: 0, // TODO: more mip levels. Probably stream all mips at once?
+                origin: Origin3d {
+                    x: 0,
+                    y: 0,
+                    z: layer as u32,
+                },
+                aspect: TextureAspect::All,
+            },
+            Extent3d {
+                width: width as u32,
+                height: height as u32,
+                depth_or_array_layers: 1,
+            },
+        );
+
+        self.insert_mapped_chunk(chunk, size)
+    }
+
+    fn stream_buffer(
+        &mut self,
+        device: &Device,
+        encoder: &mut CommandEncoder,
+        target: &Buffer,
+        range: Range<usize>,
+    ) -> BufferViewMut {
+        let size = range.len();
+        let chunk = self.remove_mapped_chunk(device, size);
+
+        encoder.copy_buffer_to_buffer(
+            &chunk.buffer,
+            chunk.used_offset as BufferAddress,
+            target,
+            range.start as BufferAddress,
+            size as BufferAddress,
+        );
+
+        self.insert_mapped_chunk(chunk, size)
+    }
+
+    fn unmap_all(&mut self) {
+        for chunk in self.mapped_chunks.drain(..) {
+            chunk.buffer.unmap();
+            self.unmapped_chunks.push(chunk);
+        }
+    }
+
+    fn remap_all(&mut self) {
+        self.recv_chunks();
+        let tx = &self.tx;
+        for chunk in self.unmapped_chunks.drain(..) {
+            let tx = tx.clone();
+            chunk
+                .buffer
+                .clone()
+                .slice(..)
+                .map_async(MapMode::Write, move |_| {
+                    let _ = tx.send(chunk);
+                });
+        }
+    }
+
+    fn remove_mapped_chunk(&mut self, device: &Device, size: usize) -> Chunk {
+        if let Some(index) = self
+            .mapped_chunks
+            .iter()
+            .position(|chunk| (chunk.used_offset + size) <= (chunk.buffer.size() as usize))
+        {
+            self.mapped_chunks.swap_remove(index)
+        } else {
+            self.recv_chunks(); // ensure self.free_chunks is up to date
+
+            if let Some(index) = self
+                .free_chunks
+                .iter()
+                .position(|chunk| size <= (chunk.buffer.size() as usize))
+            {
+                self.free_chunks.swap_remove(index)
+            } else {
+                Chunk {
+                    buffer: Arc::new(device.create_buffer(&BufferDescriptor {
+                        label: Some(self.chunk_name),
+                        size: self.chunk_size as BufferAddress,
+                        usage: BufferUsages::MAP_WRITE | BufferUsages::COPY_SRC,
+                        mapped_at_creation: true,
+                    })),
+                    used_offset: 0,
+                }
+            }
+        }
+    }
+
+    fn insert_mapped_chunk(&mut self, mut chunk: Chunk, size: usize) -> BufferViewMut {
+        let old_offset = chunk.used_offset as BufferAddress;
+        chunk.used_offset = align_to(chunk.used_offset + size, wgpu::MAP_ALIGNMENT as usize);
+
+        self.mapped_chunks.push(chunk);
+        self.mapped_chunks
+            .last()
+            .unwrap()
+            .buffer
+            .slice(old_offset..(old_offset + (size as BufferAddress)))
+            .get_mapped_range_mut()
+    }
+
+    fn recv_chunks(&mut self) {
+        while let Ok(mut chunk) = self.rx.try_recv() {
+            chunk.used_offset = 0;
+            self.free_chunks.push(chunk);
+        }
+    }
+}
+
 struct UberDataBuffer<I> {
     buffer: Buffer,
-    staging_buffer: Buffer,
+    streamer: BufferStreamer,
     freelist: Vec<Range<usize>>,
     offsets: FastHashMap<I, Range<usize>>,
 }
@@ -101,9 +277,9 @@ struct UberDataBuffer<I> {
 struct UberDataBufferDescriptor<'a> {
     device: &'a Device,
     name: &'static str,
+    streamer_chunk_name: &'static str,
     size: usize,
-    staging_name: &'static str,
-    staging_size: usize,
+    streamer_size: usize,
     usage: BufferUsages,
 }
 
@@ -112,18 +288,13 @@ impl<I> UberDataBuffer<I> {
     fn new(desc: &UberDataBufferDescriptor) -> Self {
         let buffer = desc.device.create_buffer(&BufferDescriptor {
             label: Some(desc.name),
-            size: desc.size as u64,
+            size: desc.size as BufferAddress,
             usage: desc.usage | BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
-        let staging_buffer = desc.device.create_buffer(&BufferDescriptor {
-            label: Some(desc.staging_name),
-            size: desc.staging_size as u64,
-            usage: BufferUsages::COPY_SRC | BufferUsages::MAP_WRITE,
-            mapped_at_creation: true,
-        });
+        let streamer = BufferStreamer::new(desc.streamer_size, desc.streamer_chunk_name);
         Self {
-            staging_buffer,
+            streamer,
             freelist: vec![0..buffer.size() as usize],
             offsets: FastHashMap::default(),
             buffer,
@@ -133,7 +304,7 @@ impl<I> UberDataBuffer<I> {
 
 struct UberTextureBuffer {
     texture: WgpuTexture,
-    staging_buffer: Buffer,
+    streamer: BufferStreamer,
     freelist: Vec<Range<usize>>,
     offsets: FastHashMap<TextureId, usize>,
 }
@@ -142,10 +313,10 @@ struct UberTextureBuffer {
 struct UberTextureBufferDescriptor<'a> {
     device: &'a Device,
     name: &'static str,
+    streamer_chunk_name: &'static str,
     width: usize,
     height: usize,
     layers: usize,
-    staging_name: &'static str,
     format: TextureFormat,
 }
 
@@ -166,15 +337,10 @@ impl UberTextureBuffer {
             usage: TextureUsages::COPY_DST | TextureUsages::TEXTURE_BINDING,
             view_formats: &[],
         });
-        let staging_buffer = desc.device.create_buffer(&BufferDescriptor {
-            label: Some(desc.staging_name),
-            size: 1024 * 1024, // TODO: compute?
-            usage: BufferUsages::COPY_SRC | BufferUsages::MAP_WRITE,
-            mapped_at_creation: true,
-        });
+        let streamer = BufferStreamer::new(1024 * 1024, desc.streamer_chunk_name); // TODO: compute?
         Self {
             texture,
-            staging_buffer,
+            streamer,
             freelist: vec![0..desc.layers],
             offsets: FastHashMap::default(),
         }
@@ -348,8 +514,7 @@ impl Wgpu {
                 format: surface_format,
                 width: size.0,
                 height: size.1,
-                present_mode: surface_caps.present_modes[0],
-                //present_mode: wgpu::PresentMode::Immediate,
+                present_mode: PresentMode::Fifo,
                 alpha_mode: surface_caps.alpha_modes[0],
                 view_formats: vec![],
             },
@@ -358,42 +523,42 @@ impl Wgpu {
         let vertex_buffer = UberDataBuffer::new(&UberDataBufferDescriptor {
             device: &device,
             name: "vertex uberbuffer",
+            streamer_chunk_name: "vertex stream chunk",
             size: 64 * 1024 * 1024,
-            staging_name: "vertex staging buffer",
-            staging_size: 1024 * 1024,
+            streamer_size: 1024 * 1024,
             usage: BufferUsages::VERTEX,
         });
         let index_buffer = UberDataBuffer::new(&UberDataBufferDescriptor {
             device: &device,
             name: "index uberbuffer",
+            streamer_chunk_name: "index stream chunk",
             size: 32 * 1024 * 1024,
-            staging_name: "index staging buffer",
-            staging_size: 4 * 1024,
+            streamer_size: 4 * 1024,
             usage: BufferUsages::INDEX,
         });
         let instance_buffer = UberDataBuffer::new(&UberDataBufferDescriptor {
             device: &device,
             name: "instance uberbuffer",
+            streamer_chunk_name: "instance stream chunk",
             size: 32 * 1024,
-            staging_name: "instance staging buffer",
-            staging_size: 0,
+            streamer_size: 0,
             usage: BufferUsages::STORAGE,
         });
         let indirect_buffer = UberDataBuffer::new(&UberDataBufferDescriptor {
             device: &device,
             name: "indirect uberbuffer",
+            streamer_chunk_name: "indirect stream chunk",
             size: 1024 * 1024,
-            staging_name: "indirect staging buffer",
-            staging_size: 0,
+            streamer_size: 0,
             usage: BufferUsages::INDIRECT,
         });
         let texture_buffer = UberTextureBuffer::new(&UberTextureBufferDescriptor {
             device: &device,
             name: "texture uberbuffer",
+            streamer_chunk_name: "texture stream chunk",
             width: 256,
             height: 256,
             layers: 256,
-            staging_name: "texture staging buffer",
             format: TextureFormat::Bc3RgbaUnormSrgb,
         });
 
@@ -793,56 +958,39 @@ impl Wgpu {
                 let vertices_bytes = &bytemuck::cast_slice(mesh.vertices());
                 let vertices_bytes_remaining = vertices_bytes.len() - src_vertex_offset;
                 let vertices_copy_size =
-                    vertices_bytes_remaining.min(self.vertex_buffer.staging_buffer.size() as usize);
+                    vertices_bytes_remaining.min(self.vertex_buffer.streamer.chunk_size);
 
                 if vertices_copy_size != 0 {
                     tracing::debug!("Uploading {vertices_copy_size} vertex bytes for {id:?}");
-                    let vertices_bytes = &vertices_bytes
-                        [src_vertex_offset..(src_vertex_offset + vertices_copy_size)];
-                    {
-                        let mut view = self
-                            .vertex_buffer
-                            .staging_buffer
-                            .slice(0..vertices_copy_size as BufferAddress)
-                            .get_mapped_range_mut();
-                        view.copy_from_slice(vertices_bytes);
-                    }
-                    self.vertex_buffer.staging_buffer.unmap();
 
-                    encoder.copy_buffer_to_buffer(
-                        &self.vertex_buffer.staging_buffer,
-                        0,
+                    let mut view = self.vertex_buffer.streamer.stream_buffer(
+                        &self.device,
+                        &mut encoder,
                         &self.vertex_buffer.buffer,
-                        dst_vertex_offset as BufferAddress,
-                        vertices_copy_size as BufferAddress,
+                        dst_vertex_offset..(dst_vertex_offset + vertices_copy_size),
+                    );
+                    view.copy_from_slice(
+                        &vertices_bytes
+                            [src_vertex_offset..(src_vertex_offset + vertices_copy_size)],
                     );
                 }
 
                 let indices_bytes = &bytemuck::cast_slice(mesh.indices());
                 let indices_bytes_remaining = indices_bytes.len() - src_index_offset;
                 let indices_copy_size =
-                    indices_bytes_remaining.min(self.index_buffer.staging_buffer.size() as usize);
+                    indices_bytes_remaining.min(self.index_buffer.streamer.chunk_size);
 
                 if indices_copy_size != 0 {
                     tracing::debug!("Uploading {indices_copy_size} index bytes for {id:?}");
-                    let indices_bytes =
-                        &indices_bytes[src_index_offset..(src_index_offset + indices_copy_size)];
-                    {
-                        let mut view = self
-                            .index_buffer
-                            .staging_buffer
-                            .slice(0..indices_copy_size as BufferAddress)
-                            .get_mapped_range_mut();
-                        view.copy_from_slice(indices_bytes);
-                    }
-                    self.index_buffer.staging_buffer.unmap();
 
-                    encoder.copy_buffer_to_buffer(
-                        &self.index_buffer.staging_buffer,
-                        0,
+                    let mut view = self.index_buffer.streamer.stream_buffer(
+                        &self.device,
+                        &mut encoder,
                         &self.index_buffer.buffer,
-                        dst_index_offset as BufferAddress,
-                        indices_copy_size as BufferAddress,
+                        dst_index_offset..(dst_index_offset + indices_copy_size),
+                    );
+                    view.copy_from_slice(
+                        &indices_bytes[src_index_offset..(src_index_offset + indices_copy_size)],
                     );
                 }
 
@@ -880,49 +1028,22 @@ impl Wgpu {
 
                 let texture_bytes_remaining = mip.data().len() - src_offset;
                 let texture_copy_size =
-                    texture_bytes_remaining.min(self.texture_buffer.staging_buffer.size() as usize);
+                    texture_bytes_remaining.min(self.texture_buffer.streamer.chunk_size);
 
                 if texture_copy_size != 0 {
                     tracing::debug!("Uploading {texture_copy_size} bytes for {id:?}");
-                    let texture_bytes = &mip.data()[src_offset..(src_offset + texture_copy_size)];
-                    {
-                        let mut view = self
-                            .texture_buffer
-                            .staging_buffer
-                            .slice(0..texture_copy_size as BufferAddress)
-                            .get_mapped_range_mut();
-                        view.copy_from_slice(texture_bytes);
-                    }
-                    self.texture_buffer.staging_buffer.unmap();
 
                     // TODO: Right now we assume we have enough staging buffer to push
                     //   one whole layer at a time.
                     //   We'd need to compute a proper origin and extent for a given texel offset.
-                    encoder.copy_buffer_to_texture(
-                        ImageCopyBuffer {
-                            buffer: &self.texture_buffer.staging_buffer,
-                            layout: ImageDataLayout {
-                                offset: 0,
-                                bytes_per_row: Some(mip.bytes_per_row() as u32),
-                                rows_per_image: Some(mip.size().y() as u32),
-                            },
-                        },
-                        ImageCopyTexture {
-                            texture: &self.texture_buffer.texture,
-                            mip_level: 0, // TODO: mip levels
-                            origin: Origin3d {
-                                x: 0,
-                                y: 0,
-                                z: dst_layer as u32,
-                            },
-                            aspect: TextureAspect::All,
-                        },
-                        Extent3d {
-                            width: mip.size().x() as u32,
-                            height: mip.size().y() as u32,
-                            depth_or_array_layers: 1,
-                        },
+                    let mut view = self.texture_buffer.streamer.stream_mip(
+                        &self.device,
+                        &mut encoder,
+                        &self.texture_buffer.texture,
+                        dst_layer,
+                        &mip,
                     );
+                    view.copy_from_slice(&mip.data()[src_offset..(src_offset + texture_copy_size)]);
                 }
 
                 if texture_copy_size == texture_bytes_remaining {
@@ -940,7 +1061,15 @@ impl Wgpu {
             }
         }
 
+        self.vertex_buffer.streamer.unmap_all();
+        self.index_buffer.streamer.unmap_all();
+        self.texture_buffer.streamer.unmap_all();
+
         self.queue.submit(Some(encoder.finish()));
+
+        self.vertex_buffer.streamer.remap_all();
+        self.index_buffer.streamer.remap_all();
+        self.texture_buffer.streamer.remap_all();
     }
 
     pub fn render_frame(&mut self) {

@@ -1,10 +1,11 @@
 use std::{
     io::{self, ErrorKind, Read, Seek, SeekFrom},
+    ops::Range,
     slice::Iter,
     str,
 };
 
-use crate::{math::Vector2, util};
+use crate::util;
 
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]
 pub enum TextureFormat {
@@ -15,16 +16,15 @@ pub enum TextureFormat {
 
 #[derive(Debug, Default)]
 struct RawMipLevel {
-    start: usize,
-    end: usize,
-    size: Vector2,
+    range: Range<usize>,
+    size: (usize, usize),
     bytes_per_row: usize,
 }
 
 #[derive(Debug, Default)]
 pub struct MipLevel<'a> {
     data: &'a [u8],
-    size: Vector2,
+    size: (usize, usize),
     bytes_per_row: usize,
 }
 
@@ -35,7 +35,7 @@ impl<'a> MipLevel<'a> {
     }
 
     #[inline]
-    pub fn size(&self) -> Vector2 {
+    pub fn size(&self) -> (usize, usize) {
         self.size
     }
 
@@ -92,7 +92,7 @@ impl<'a> Iterator for MipLevelIterator<'a> {
     #[inline]
     fn next(&mut self) -> Option<MipLevel<'a>> {
         self.inner.next().map(|level| MipLevel {
-            data: &self.data[level.start..level.end],
+            data: &self.data[level.range.start..level.range.end],
             size: level.size,
             bytes_per_row: level.bytes_per_row,
         })
@@ -220,9 +220,8 @@ impl DDSReader {
                     texture.data.push(util::read_u8(reader)?);
                 }
                 texture.mip_levels.push(RawMipLevel {
-                    start: offset,
-                    end: offset + linear_size,
-                    size: (mip_width as f32, mip_height as f32).into(),
+                    range: offset..(offset + linear_size),
+                    size: (mip_width, mip_height),
                     bytes_per_row: mip_pitch,
                 });
                 offset += linear_size;
