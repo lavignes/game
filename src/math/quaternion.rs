@@ -150,30 +150,36 @@ macro_rules! quat_mul {
             type Output = Quaternion;
 
             fn mul(self, rhs: $quat_type) -> Quaternion {
-                let a = f32x4::from_array(self.0.0);
-                let b = f32x4::from_array(rhs.0.0);
+                //let a = f32x4::from_array(self.0.0);
+                //let b = f32x4::from_array(rhs.0.0);
 
-                // TODO(lavignes): could replace these with bitwise ops to flip the sign
-                let sig_mask1 = f32x4::from_array([1.0, 1.0, 1.0, -1.0]);
-                let sig_mask2 = f32x4::from_array([1.0, -1.0, -1.0, -1.0]);
+                //// TODO(lavignes): could replace these with bitwise ops to flip the sign
+                //let sig_mask1 = f32x4::from_array([1.0, 1.0, 1.0, -1.0]);
+                //let sig_mask2 = f32x4::from_array([1.0, -1.0, -1.0, -1.0]);
 
-                let a0312 = simd::simd_swizzle!(a, [0, 3, 1, 2]);
-                let b3021 = simd::simd_swizzle!(b, [3, 0, 2, 1]);
-                let s = (a0312 * b3021 * sig_mask1).reduce_sum();
+                //let a0312 = simd::simd_swizzle!(a, [0, 3, 1, 2]);
+                //let b3021 = simd::simd_swizzle!(b, [3, 0, 2, 1]);
+                //let s = (a0312 * b3021 * sig_mask1).reduce_sum();
 
-                let a1320 = simd::simd_swizzle!(a, [1, 3, 2, 0]);
-                let b3102 = simd::simd_swizzle!(b, [3, 1, 0, 2]);
-                let t = (a1320 * b3102 * sig_mask1).reduce_sum();
+                //let a1320 = simd::simd_swizzle!(a, [1, 3, 2, 0]);
+                //let b3102 = simd::simd_swizzle!(b, [3, 1, 0, 2]);
+                //let t = (a1320 * b3102 * sig_mask1).reduce_sum();
 
-                let a2301 = simd::simd_swizzle!(a, [2, 3, 0, 1]);
-                let b3210 = simd::simd_swizzle!(b, [3, 2, 1, 0]);
-                let u = (a2301 * b3210 * sig_mask1).reduce_sum();
+                //let a2301 = simd::simd_swizzle!(a, [2, 3, 0, 1]);
+                //let b3210 = simd::simd_swizzle!(b, [3, 2, 1, 0]);
+                //let u = (a2301 * b3210 * sig_mask1).reduce_sum();
 
-                let a3012 = simd::simd_swizzle!(a, [3, 0, 1, 2]);
-                let b3012 = simd::simd_swizzle!(b, [3, 0, 1, 2]);
-                let v = (a3012 * b3012 * sig_mask2).reduce_sum();
+                //let a3012 = simd::simd_swizzle!(a, [3, 0, 1, 2]);
+                //let b3012 = simd::simd_swizzle!(b, [3, 0, 1, 2]);
+                //let v = (a3012 * b3012 * sig_mask2).reduce_sum();
 
-                Quaternion(Vector4([s, t, u, v]))
+                //Quaternion(Vector4([s, t, u, v]))
+                Quaternion(Vector4([
+                    self.0[0] * rhs.0[3] + self.0[3] * rhs.0[0] + self.0[1] * rhs.0[2] - self.0[2] * rhs.0[1],
+                    self.0[1] * rhs.0[3] + self.0[3] * rhs.0[1] + self.0[2] * rhs.0[0] - self.0[0] * rhs.0[2],
+                    self.0[2] * rhs.0[3] + self.0[3] * rhs.0[2] + self.0[0] * rhs.0[1] - self.0[1] * rhs.0[0],
+                    self.0[3] * rhs.0[3] - self.0[0] * rhs.0[0] - self.0[1] * rhs.0[1] - self.0[2] * rhs.0[2],
+                ]))
             }
         }
     };
@@ -191,8 +197,14 @@ macro_rules! quat_vec3_mul {
 
             #[inline]
             fn mul(self, rhs: $vec_type) -> Quaternion {
-                // AFAICT converting the vec into a quat works!
-                self * &Quaternion(rhs.widened(0.0))
+                // AFAICT converting the vec into a quat works! ? TODO
+                // self * &Quaternion(rhs.widened(0.0))
+                Quaternion(Vector4([
+                    self.0[3] * rhs.0[0] + self.0[1] * rhs.0[2] - self.0[2] * rhs.0[1],
+                    self.0[3] * rhs.0[1] + self.0[2] * rhs.0[0] - self.0[0] * rhs.0[2],
+                    self.0[3] * rhs.0[2] + self.0[0] * rhs.0[1] - self.0[1] * rhs.0[0],
+                    -self.0[0] * rhs.0[0] - self.0[1] * rhs.0[1] - self.0[2] * rhs.0[2],
+                ]))
             }
         }
     };

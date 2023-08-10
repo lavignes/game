@@ -89,7 +89,7 @@ impl Matrix4 {
     pub fn perspective(fov: f32, aspect_ratio: f32, near: f32, far: f32) -> Self {
         let depth = near - far;
         let tan_fov = (fov / 2.0).tan();
-        Matrix4([
+        Self([
             Vector4([1.0 / (tan_fov * aspect_ratio), 0.0, 0.0, 0.0]),
             Vector4([0.0, 1.0 / tan_fov, 0.0, 0.0]),
             Vector4([0.0, 0.0, (near + far) / depth, -1.0]),
@@ -100,15 +100,26 @@ impl Matrix4 {
     #[inline]
     pub fn orthographic(top: f32, left: f32, bottom: f32, right: f32, near: f32, far: f32) -> Self {
         // We make `b` end in 1.0, so the final vec ends in 1.0 after the negation
-        let a = f32x4::from_array([right, top, far, 0.0]);
-        let b = f32x4::from_array([right, top, far, 1.0]);
-        let c = a + b;
-        let d = a - b;
+        //let a = f32x4::from_array([right, top, far, 0.0]);
+        //let b = f32x4::from_array([right, top, far, 1.0]);
+        //let c = a + b;
+        //let d = a - b;
+        //Self([
+        //    Vector4([2.0 / (right - left), 0.0, 0.0, 0.0]),
+        //    Vector4([0.0, 2.0 / (top - bottom), 0.0, 0.0]),
+        //    Vector4([0.0, 0.0, -2.0 / (far - near), 0.0]),
+        //    Vector4((-(c / d)).to_array()),
+        //])
         Self([
             Vector4([2.0 / (right - left), 0.0, 0.0, 0.0]),
             Vector4([0.0, 2.0 / (top - bottom), 0.0, 0.0]),
             Vector4([0.0, 0.0, -2.0 / (far - near), 0.0]),
-            Vector4((-(c / d)).to_array()),
+            Vector4([
+                -((right + left) / (right - left)),
+                -((top + bottom) / (top - bottom)),
+                -((far + near) / (far - near)),
+                1.0,
+            ]),
         ])
     }
 
@@ -129,18 +140,29 @@ impl Matrix4 {
         At: Into<Vector4>,
         Up: Into<Vector4>,
     {
-        let position = position.into();
+        //let position = position.into();
 
+        //let z = (at.into() - position).normalized();
+        //let x = z.cross(up.into()).normalized();
+        //let y = x.cross(z);
+        //let z = -z;
+        //let w = f32x4::from_array([x.dot(position), y.dot(position), z.dot(position), -1.0]);
+        //Self([
+        //    Vector4([x.0[0], y.0[0], z.0[0], 0.0]),
+        //    Vector4([x.0[1], y.0[1], z.0[1], 0.0]),
+        //    Vector4([x.0[2], y.0[2], z.0[2], 0.0]),
+        //    Vector4((-w).to_array()),
+        //])
+        let position = position.into();
         let z = (at.into() - position).normalized();
-        let x = z.cross(up.into()).normalized();
+        let x = z.cross(up).normalized();
         let y = x.cross(z);
         let z = -z;
-        let w = f32x4::from_array([x.dot(position), y.dot(position), z.dot(position), -1.0]);
         Self([
             Vector4([x.0[0], y.0[0], z.0[0], 0.0]),
             Vector4([x.0[1], y.0[1], z.0[1], 0.0]),
             Vector4([x.0[2], y.0[2], z.0[2], 0.0]),
-            Vector4((-w).to_array()),
+            Vector4([-x.dot(position), -y.dot(position), -z.dot(position), 1.0]),
         ])
     }
 

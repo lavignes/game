@@ -106,7 +106,7 @@ impl<'a> Default for GfxInitOptions<'a> {
                 far: 65535.0,
             },
             camera: Camera {
-                position: Vector3::new(0.0, 0.0, 16.0),
+                position: Vector3::new(2.0, 2.0, 16.0),
                 euler_angles: Vector2::splat(0.0),
             },
         }
@@ -156,17 +156,17 @@ impl Gfx {
 
         mesh.push_vertices(&[
             Vertex {
-                position: Vector3::new(0.0, 0.5, 0.0) * 2.0,
+                position: Vector3::new(0.0, 0.5, 0.0) * 40.0,
                 tex_coord: Vector2::new(0.5, 0.0),
                 ..Default::default()
             },
             Vertex {
-                position: Vector3::new(0.5, -0.5, 0.0) * 2.0,
+                position: Vector3::new(0.5, -0.5, 0.0) * 40.0,
                 tex_coord: Vector2::new(1.0, 1.0),
                 ..Default::default()
             },
             Vertex {
-                position: Vector3::new(-0.5, -0.5, 0.0) * 2.0,
+                position: Vector3::new(-0.5, -0.5, 0.0) * 40.0,
                 tex_coord: Vector2::new(0.0, 1.0),
                 ..Default::default()
             },
@@ -196,7 +196,7 @@ impl Gfx {
 
     #[inline]
     pub fn tick(&mut self) {
-        //self.camera.euler_angles = self.camera.euler_angles + Vector2::new(0.0, 0.2);
+        self.camera.euler_angles = self.camera.euler_angles + Vector2::new(0.02, 0.02);
         self.wgpu.set_camera(self.camera);
         self.wgpu.set_projection(self.projection);
         self.wgpu.tick();

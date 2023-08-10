@@ -29,8 +29,8 @@ struct VertexOutput {
 fn vertex_main(in: VertexInput) -> VertexOutput {
     // TODO: model * vec4<f32>(in.position, 1.0);
     let world_position = vec4<f32>(in.position, 1.0);
-    //let clip_position = projection.matrix * view.matrix * world_position;
-    let clip_position = view.matrix * world_position;
+    let clip_position = projection.matrix * view.matrix * world_position;
+    //let clip_position = view.matrix * world_position;
 
     var out: VertexOutput;
     out.clip_position = clip_position;

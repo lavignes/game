@@ -735,7 +735,7 @@ impl Wgpu {
                 topology: PrimitiveTopology::TriangleList,
                 strip_index_format: None,
                 front_face: FrontFace::Cw,
-                cull_mode: None,
+                cull_mode: None, // TODO: culling
                 polygon_mode: PolygonMode::Fill,
                 unclipped_depth: false,
                 conservative: false,
@@ -797,8 +797,8 @@ impl Wgpu {
 
     #[inline]
     pub fn set_projection(&mut self, projection: PerspectiveProjection) {
-        //self.projection = projection.into();
-        self.projection.0 = Matrix4::orthographic(-1.0, -1.0, 1.0, 1.0, -1.0, 1.0);
+        self.projection = projection.into();
+        //self.projection.0 = Matrix4::orthographic(-1.0, -1.0, 1.0, 1.0, -1.0, 1.0);
         self.queue.write_buffer(
             &self.projection_buffer,
             0,
@@ -809,16 +809,16 @@ impl Wgpu {
     #[inline]
     pub fn set_camera(&mut self, camera: Camera) {
         self.view_look_at = camera.into();
-        //self.queue.write_buffer(
-        //    &self.view_buffer,
-        //    0,
-        //    bytemuck::bytes_of(&self.view_look_at.view),
-        //);
         self.queue.write_buffer(
             &self.view_buffer,
             0,
-            bytemuck::bytes_of(&Matrix4::rotate_forward(camera.euler_angles.y())),
+            bytemuck::bytes_of(&self.view_look_at.view),
         );
+        //self.queue.write_buffer(
+        //    &self.view_buffer,
+        //    0,
+        //    bytemuck::bytes_of(&Matrix4::rotate_forward(camera.euler_angles.y())),
+        //);
     }
 
     #[inline]
@@ -1061,12 +1061,14 @@ impl Wgpu {
             }
         }
 
+        // must unmap before submtting. this will matter later when we do multiple jobs per tick
         self.vertex_buffer.streamer.unmap_all();
         self.index_buffer.streamer.unmap_all();
         self.texture_buffer.streamer.unmap_all();
 
         self.queue.submit(Some(encoder.finish()));
 
+        // remap any chunks that are completed and ready to stream
         self.vertex_buffer.streamer.remap_all();
         self.index_buffer.streamer.remap_all();
         self.texture_buffer.streamer.remap_all();
