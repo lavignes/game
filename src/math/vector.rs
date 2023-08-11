@@ -1,7 +1,6 @@
-use std::{
-    ops::{Add, Div, Index, IndexMut, Mul, Neg, Sub},
-    simd::{self, f32x2, f32x4, Simd, SimdFloat},
-};
+use std::ops::{Add, Div, Index, IndexMut, Mul, Neg, Sub};
+#[cfg(feature = "simd")]
+use std::simd::{self, f32x2, f32x4, Simd, SimdFloat};
 
 use crate::math::Quaternion;
 
@@ -19,6 +18,7 @@ pub struct Vector4(pub(crate) [f32; 4]);
 
 macro_rules! vec_simd_binop {
     ($vec_type:ident, $simd_type:ident, $op_trait:ident, $op_name:ident) => {
+        #[cfg(feature = "simd")]
         impl $op_trait<$vec_type> for $vec_type {
             type Output = $vec_type;
 
@@ -30,6 +30,7 @@ macro_rules! vec_simd_binop {
             }
         }
 
+        #[cfg(feature = "simd")]
         impl $op_trait<$vec_type> for &$vec_type {
             type Output = $vec_type;
 
@@ -41,6 +42,7 @@ macro_rules! vec_simd_binop {
             }
         }
 
+        #[cfg(feature = "simd")]
         impl $op_trait<&$vec_type> for $vec_type {
             type Output = $vec_type;
 
@@ -52,6 +54,7 @@ macro_rules! vec_simd_binop {
             }
         }
 
+        #[cfg(feature = "simd")]
         impl $op_trait<&$vec_type> for &$vec_type {
             type Output = $vec_type;
 
@@ -63,6 +66,7 @@ macro_rules! vec_simd_binop {
             }
         }
 
+        #[cfg(feature = "simd")]
         impl $op_trait<f32> for $vec_type {
             type Output = $vec_type;
 
@@ -74,6 +78,7 @@ macro_rules! vec_simd_binop {
             }
         }
 
+        #[cfg(feature = "simd")]
         impl $op_trait<f32> for &$vec_type {
             type Output = $vec_type;
 
@@ -89,6 +94,7 @@ macro_rules! vec_simd_binop {
 
 macro_rules! vec_simd_misc {
     ($vec_type:ident, $simd_type:ident) => {
+        #[cfg(feature = "simd")]
         impl Neg for $vec_type {
             type Output = Self;
 
@@ -98,6 +104,7 @@ macro_rules! vec_simd_misc {
             }
         }
 
+        #[cfg(feature = "simd")]
         impl Neg for &$vec_type {
             type Output = $vec_type;
 
@@ -107,6 +114,7 @@ macro_rules! vec_simd_misc {
             }
         }
 
+        #[cfg(feature = "simd")]
         impl PartialEq for $vec_type {
             #[inline]
             fn eq(&self, rhs: &Self) -> bool {
@@ -117,6 +125,7 @@ macro_rules! vec_simd_misc {
             }
         }
 
+        #[cfg(feature = "simd")]
         impl Index<usize> for $vec_type {
             type Output = f32;
 
@@ -126,10 +135,75 @@ macro_rules! vec_simd_misc {
             }
         }
 
+        #[cfg(feature = "simd")]
         impl IndexMut<usize> for $vec_type {
             #[inline]
             fn index_mut(&mut self, index: usize) -> &mut f32 {
                 &mut self.0[index]
+            }
+        }
+    };
+}
+
+macro_rules! vec2_binop {
+    ($op_trait:ident, $op_name:ident) => {
+        #[cfg(not(feature = "simd"))]
+        impl $op_trait<Vector2> for Vector2 {
+            type Output = Self;
+
+            #[inline]
+            fn $op_name(self, rhs: Vector2) -> Self::Output {
+                Vector2([self.0[0].$op_name(rhs.0[0]), self.0[1].$op_name(rhs.0[1])])
+            }
+        }
+
+        #[cfg(not(feature = "simd"))]
+        impl $op_trait<Vector2> for &Vector2 {
+            type Output = Vector2;
+
+            #[inline]
+            fn $op_name(self, rhs: Vector2) -> Self::Output {
+                Vector2([self.0[0].$op_name(rhs.0[0]), self.0[1].$op_name(rhs.0[1])])
+            }
+        }
+
+        #[cfg(not(feature = "simd"))]
+        impl $op_trait<&Vector2> for Vector2 {
+            type Output = Self;
+
+            #[inline]
+            fn $op_name(self, rhs: &Vector2) -> Self::Output {
+                Vector2([self.0[0].$op_name(rhs.0[0]), self.0[1].$op_name(rhs.0[1])])
+            }
+        }
+
+        #[cfg(not(feature = "simd"))]
+        impl $op_trait<&Vector2> for &Vector2 {
+            type Output = Vector2;
+
+            #[inline]
+            fn $op_name(self, rhs: &Vector2) -> Self::Output {
+                Vector2([self.0[0].$op_name(rhs.0[0]), self.0[1].$op_name(rhs.0[1])])
+            }
+        }
+
+        #[cfg(not(feature = "simd"))]
+        impl $op_trait<f32> for Vector2 {
+            type Output = Self;
+
+            #[inline]
+            fn $op_name(self, rhs: f32) -> Self::Output {
+                Vector2([self.0[0].$op_name(rhs), self.0[1].$op_name(rhs)])
+            }
+        }
+
+        #[cfg(not(feature = "simd"))]
+        impl $op_trait<f32> for &Vector2 {
+            type Output = Vector2;
+
+            #[inline]
+            fn $op_name(self, rhs: f32) -> Self::Output {
+                Vector2([self.0[0].$op_name(rhs), self.0[1].$op_name(rhs)])
             }
         }
     };
@@ -217,6 +291,100 @@ macro_rules! vec3_binop {
     };
 }
 
+macro_rules! vec4_binop {
+    ($op_trait:ident, $op_name:ident) => {
+        #[cfg(not(feature = "simd"))]
+        impl $op_trait<Vector4> for Vector4 {
+            type Output = Self;
+
+            #[inline]
+            fn $op_name(self, rhs: Vector4) -> Self::Output {
+                Vector4([
+                    self.0[0].$op_name(rhs.0[0]),
+                    self.0[1].$op_name(rhs.0[1]),
+                    self.0[2].$op_name(rhs.0[2]),
+                    self.0[3].$op_name(rhs.0[3]),
+                ])
+            }
+        }
+
+        #[cfg(not(feature = "simd"))]
+        impl $op_trait<Vector4> for &Vector4 {
+            type Output = Vector4;
+
+            #[inline]
+            fn $op_name(self, rhs: Vector4) -> Self::Output {
+                Vector4([
+                    self.0[0].$op_name(rhs.0[0]),
+                    self.0[1].$op_name(rhs.0[1]),
+                    self.0[2].$op_name(rhs.0[2]),
+                    self.0[3].$op_name(rhs.0[3]),
+                ])
+            }
+        }
+
+        #[cfg(not(feature = "simd"))]
+        impl $op_trait<&Vector4> for Vector4 {
+            type Output = Self;
+
+            #[inline]
+            fn $op_name(self, rhs: &Vector4) -> Self::Output {
+                Vector4([
+                    self.0[0].$op_name(rhs.0[0]),
+                    self.0[1].$op_name(rhs.0[1]),
+                    self.0[2].$op_name(rhs.0[2]),
+                    self.0[3].$op_name(rhs.0[3]),
+                ])
+            }
+        }
+
+        #[cfg(not(feature = "simd"))]
+        impl $op_trait<&Vector4> for &Vector4 {
+            type Output = Vector4;
+
+            #[inline]
+            fn $op_name(self, rhs: &Vector4) -> Self::Output {
+                Vector4([
+                    self.0[0].$op_name(rhs.0[0]),
+                    self.0[1].$op_name(rhs.0[1]),
+                    self.0[2].$op_name(rhs.0[2]),
+                    self.0[3].$op_name(rhs.0[3]),
+                ])
+            }
+        }
+
+        #[cfg(not(feature = "simd"))]
+        impl $op_trait<f32> for Vector4 {
+            type Output = Self;
+
+            #[inline]
+            fn $op_name(self, rhs: f32) -> Self::Output {
+                Vector4([
+                    self.0[0].$op_name(rhs),
+                    self.0[1].$op_name(rhs),
+                    self.0[2].$op_name(rhs),
+                    self.0[3].$op_name(rhs),
+                ])
+            }
+        }
+
+        #[cfg(not(feature = "simd"))]
+        impl $op_trait<f32> for &Vector4 {
+            type Output = Vector4;
+
+            #[inline]
+            fn $op_name(self, rhs: f32) -> Self::Output {
+                Vector4([
+                    self.0[0].$op_name(rhs),
+                    self.0[1].$op_name(rhs),
+                    self.0[2].$op_name(rhs),
+                    self.0[3].$op_name(rhs),
+                ])
+            }
+        }
+    };
+}
+
 impl Vector2 {
     #[inline]
     pub const fn new(x: f32, y: f32) -> Self {
@@ -250,14 +418,31 @@ impl Vector2 {
 
     #[inline]
     pub fn dot<Rhs: Into<Self>>(&self, rhs: Rhs) -> f32 {
-        let product = f32x2::from_array(self.0) * f32x2::from_array(rhs.into().0);
-        product.reduce_sum()
+        #[cfg(feature = "simd")]
+        {
+            let product = f32x2::from_array(self.0) * f32x2::from_array(rhs.into().0);
+            product.reduce_sum()
+        }
+
+        #[cfg(not(feature = "simd"))]
+        {
+            let rhs = rhs.into();
+            (self.0[0] * rhs.0[0]) + (self.0[1] * rhs.0[1])
+        }
     }
 
     #[inline]
     pub fn normal_squared(&self) -> f32 {
-        let a = f32x2::from_array(self.0);
-        (a * a).reduce_sum()
+        #[cfg(feature = "simd")]
+        {
+            let a = f32x2::from_array(self.0);
+            (a * a).reduce_sum()
+        }
+
+        #[cfg(not(feature = "simd"))]
+        {
+            self.dot(*self)
+        }
     }
 
     #[inline]
@@ -267,9 +452,7 @@ impl Vector2 {
 
     #[inline]
     pub fn normalized(&self) -> Self {
-        let length = self.length();
-        let quotient = f32x2::from_array(self.0) / f32x2::splat(length);
-        Self(quotient.to_array())
+        self / self.length()
     }
 
     #[inline]
@@ -279,10 +462,59 @@ impl Vector2 {
 }
 
 vec_simd_binop!(Vector2, f32x2, Add, add);
+vec2_binop!(Add, add);
 vec_simd_binop!(Vector2, f32x2, Sub, sub);
+vec2_binop!(Sub, sub);
 vec_simd_binop!(Vector2, f32x2, Mul, mul);
+vec2_binop!(Mul, mul);
 vec_simd_binop!(Vector2, f32x2, Div, div);
+vec2_binop!(Div, div);
 vec_simd_misc!(Vector2, f32x2);
+
+#[cfg(not(feature = "simd"))]
+impl PartialEq for Vector2 {
+    #[inline]
+    fn eq(&self, rhs: &Vector2) -> bool {
+        (self.0[0] - rhs.0[0]).abs() <= f32::EPSILON && (self.0[1] - rhs.0[1]).abs() <= f32::EPSILON
+    }
+}
+
+#[cfg(not(feature = "simd"))]
+impl Neg for Vector2 {
+    type Output = Self;
+
+    #[inline]
+    fn neg(self) -> Self::Output {
+        Self([-self.0[0], -self.0[1]])
+    }
+}
+
+#[cfg(not(feature = "simd"))]
+impl Neg for &Vector2 {
+    type Output = Vector2;
+
+    #[inline]
+    fn neg(self) -> Self::Output {
+        Vector2([-self.0[0], -self.0[1]])
+    }
+}
+
+#[cfg(not(feature = "simd"))]
+impl Index<usize> for Vector2 {
+    type Output = f32;
+    #[inline]
+    fn index(&self, index: usize) -> &f32 {
+        &self.0[index]
+    }
+}
+
+#[cfg(not(feature = "simd"))]
+impl IndexMut<usize> for Vector2 {
+    #[inline]
+    fn index_mut(&mut self, index: usize) -> &mut f32 {
+        &mut self.0[index]
+    }
+}
 
 impl From<(f32, f32)> for Vector2 {
     #[inline]
@@ -573,19 +805,40 @@ impl Vector4 {
 
     #[inline]
     pub fn dot<Rhs: Into<Self>>(&self, rhs: Rhs) -> f32 {
-        let product = f32x4::from_array(self.0) * f32x4::from_array(rhs.into().0);
-        product.reduce_sum()
+        #[cfg(feature = "simd")]
+        {
+            let product = f32x4::from_array(self.0) * f32x4::from_array(rhs.into().0);
+            product.reduce_sum()
+        }
+
+        #[cfg(not(feature = "simd"))]
+        {
+            let rhs = rhs.into();
+            (self.0[0] * rhs.0[0])
+                + (self.0[1] * rhs.0[1])
+                + (self.0[2] * rhs.0[2])
+                + (self.0[3] * rhs.0[3])
+        }
     }
 
     #[inline]
     pub fn cross<Rhs: Into<Self>>(&self, rhs: Rhs) -> Self {
-        let rhs = f32x4::from_array(rhs.into().0);
-        let a = simd::simd_swizzle!(f32x4::from_array(self.0), [3, 0, 2, 1]);
-        let b = simd::simd_swizzle!(rhs, [3, 1, 0, 2]);
-        let c = a * rhs;
-        let d = a * b;
-        let e = simd::simd_swizzle!(c, [3, 0, 2, 1]);
-        Self((d - e).to_array())
+        #[cfg(feature = "simd")]
+        {
+            let rhs = f32x4::from_array(rhs.into().0);
+            let a = simd::simd_swizzle!(f32x4::from_array(self.0), [3, 0, 2, 1]);
+            let b = simd::simd_swizzle!(rhs, [3, 1, 0, 2]);
+            let c = a * rhs;
+            let d = a * b;
+            let e = simd::simd_swizzle!(c, [3, 0, 2, 1]);
+            Self((d - e).to_array())
+        }
+
+        #[cfg(not(feature = "simd"))]
+        {
+            let rhs = rhs.into();
+            self.narrowed().cross(rhs.narrowed()).widened(0.0)
+        }
     }
 
     #[inline]
@@ -600,9 +853,7 @@ impl Vector4 {
 
     #[inline]
     pub fn normalized(&self) -> Self {
-        let length = self.length();
-        let quotient = f32x4::from_array(self.0) / f32x4::splat(length);
-        Self(quotient.to_array())
+        self / self.length()
     }
 
     #[inline]
@@ -612,7 +863,59 @@ impl Vector4 {
 }
 
 vec_simd_binop!(Vector4, f32x4, Add, add);
+vec4_binop!(Add, add);
 vec_simd_binop!(Vector4, f32x4, Sub, sub);
+vec4_binop!(Sub, sub);
 vec_simd_binop!(Vector4, f32x4, Mul, mul);
+vec4_binop!(Mul, mul);
 vec_simd_binop!(Vector4, f32x4, Div, div);
+vec4_binop!(Div, div);
 vec_simd_misc!(Vector4, f32x4);
+
+#[cfg(not(feature = "simd"))]
+impl PartialEq for Vector4 {
+    #[inline]
+    fn eq(&self, rhs: &Vector4) -> bool {
+        (self.0[0] - rhs.0[0]).abs() <= f32::EPSILON
+            && (self.0[1] - rhs.0[1]).abs() <= f32::EPSILON
+            && (self.0[2] - rhs.0[2]).abs() <= f32::EPSILON
+            && (self.0[3] - rhs.0[3]).abs() <= f32::EPSILON
+    }
+}
+
+#[cfg(not(feature = "simd"))]
+impl Neg for Vector4 {
+    type Output = Self;
+
+    #[inline]
+    fn neg(self) -> Self::Output {
+        Self([-self.0[0], -self.0[1], -self.0[2], -self.0[3]])
+    }
+}
+
+#[cfg(not(feature = "simd"))]
+impl Neg for &Vector4 {
+    type Output = Vector4;
+
+    #[inline]
+    fn neg(self) -> Self::Output {
+        Vector4([-self.0[0], -self.0[1], -self.0[2], -self.0[3]])
+    }
+}
+
+#[cfg(not(feature = "simd"))]
+impl Index<usize> for Vector4 {
+    type Output = f32;
+    #[inline]
+    fn index(&self, index: usize) -> &f32 {
+        &self.0[index]
+    }
+}
+
+#[cfg(not(feature = "simd"))]
+impl IndexMut<usize> for Vector4 {
+    #[inline]
+    fn index_mut(&mut self, index: usize) -> &mut f32 {
+        &mut self.0[index]
+    }
+}

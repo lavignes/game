@@ -1,7 +1,6 @@
-use std::{
-    ops::Mul,
-    simd::{self, f32x4, SimdFloat, SimdPartialOrd, Which},
-};
+use std::ops::Mul;
+#[cfg(feature = "simd")]
+use std::simd::{self, f32x4, SimdFloat, SimdPartialOrd, Which};
 
 use crate::math::{Quaternion, Vector3, Vector4};
 
@@ -99,28 +98,35 @@ impl Matrix4 {
 
     #[inline]
     pub fn orthographic(top: f32, left: f32, bottom: f32, right: f32, near: f32, far: f32) -> Self {
-        // We make `b` end in 1.0, so the final vec ends in 1.0 after the negation
-        //let a = f32x4::from_array([right, top, far, 0.0]);
-        //let b = f32x4::from_array([right, top, far, 1.0]);
-        //let c = a + b;
-        //let d = a - b;
-        //Self([
-        //    Vector4([2.0 / (right - left), 0.0, 0.0, 0.0]),
-        //    Vector4([0.0, 2.0 / (top - bottom), 0.0, 0.0]),
-        //    Vector4([0.0, 0.0, -2.0 / (far - near), 0.0]),
-        //    Vector4((-(c / d)).to_array()),
-        //])
-        Self([
-            Vector4([2.0 / (right - left), 0.0, 0.0, 0.0]),
-            Vector4([0.0, 2.0 / (top - bottom), 0.0, 0.0]),
-            Vector4([0.0, 0.0, -2.0 / (far - near), 0.0]),
-            Vector4([
-                -((right + left) / (right - left)),
-                -((top + bottom) / (top - bottom)),
-                -((far + near) / (far - near)),
-                1.0,
-            ]),
-        ])
+        #[cfg(feature = "simd")]
+        {
+            // We make `b` end in 1.0, so the final vec ends in 1.0 after the negation
+            let a = f32x4::from_array([right, top, far, 0.0]);
+            let b = f32x4::from_array([right, top, far, 1.0]);
+            let c = a + b;
+            let d = a - b;
+            Self([
+                Vector4([2.0 / (right - left), 0.0, 0.0, 0.0]),
+                Vector4([0.0, 2.0 / (top - bottom), 0.0, 0.0]),
+                Vector4([0.0, 0.0, -2.0 / (far - near), 0.0]),
+                Vector4((-(c / d)).to_array()),
+            ])
+        }
+
+        #[cfg(not(feature = "simd"))]
+        {
+            Self([
+                Vector4([2.0 / (right - left), 0.0, 0.0, 0.0]),
+                Vector4([0.0, 2.0 / (top - bottom), 0.0, 0.0]),
+                Vector4([0.0, 0.0, -2.0 / (far - near), 0.0]),
+                Vector4([
+                    -((right + left) / (right - left)),
+                    -((top + bottom) / (top - bottom)),
+                    -((far + near) / (far - near)),
+                    1.0,
+                ]),
+            ])
+        }
     }
 
     #[inline]
@@ -140,35 +146,42 @@ impl Matrix4 {
         At: Into<Vector4>,
         Up: Into<Vector4>,
     {
-        //let position = position.into();
-
-        //let z = (at.into() - position).normalized();
-        //let x = z.cross(up.into()).normalized();
-        //let y = x.cross(z);
-        //let z = -z;
-        //let w = f32x4::from_array([x.dot(position), y.dot(position), z.dot(position), -1.0]);
-        //Self([
-        //    Vector4([x.0[0], y.0[0], z.0[0], 0.0]),
-        //    Vector4([x.0[1], y.0[1], z.0[1], 0.0]),
-        //    Vector4([x.0[2], y.0[2], z.0[2], 0.0]),
-        //    Vector4((-w).to_array()),
-        //])
         let position = position.into();
-        let z = (at.into() - position).normalized();
-        let x = z.cross(up).normalized();
-        let y = x.cross(z);
-        let z = -z;
-        Self([
-            Vector4([x.0[0], y.0[0], z.0[0], 0.0]),
-            Vector4([x.0[1], y.0[1], z.0[1], 0.0]),
-            Vector4([x.0[2], y.0[2], z.0[2], 0.0]),
-            Vector4([-x.dot(position), -y.dot(position), -z.dot(position), 1.0]),
-        ])
+
+        #[cfg(feature = "simd")]
+        {
+            let z = (at.into() - position).normalized();
+            let x = z.cross(up.into()).normalized();
+            let y = x.cross(z);
+            let z = -z;
+            let w = f32x4::from_array([x.dot(position), y.dot(position), z.dot(position), -1.0]);
+            Self([
+                Vector4([x.0[0], y.0[0], z.0[0], 0.0]),
+                Vector4([x.0[1], y.0[1], z.0[1], 0.0]),
+                Vector4([x.0[2], y.0[2], z.0[2], 0.0]),
+                Vector4((-w).to_array()),
+            ])
+        }
+
+        #[cfg(not(feature = "simd"))]
+        {
+            let z = (at.into() - position).normalized();
+            let x = z.cross(up).normalized();
+            let y = x.cross(z);
+            let z = -z;
+            Self([
+                Vector4([x.0[0], y.0[0], z.0[0], 0.0]),
+                Vector4([x.0[1], y.0[1], z.0[1], 0.0]),
+                Vector4([x.0[2], y.0[2], z.0[2], 0.0]),
+                Vector4([-x.dot(position), -y.dot(position), -z.dot(position), 1.0]),
+            ])
+        }
     }
 
     /// A fast transform matrix inversion that only works if the matrix has no scale components.
     // https://lxjk.github.io/2017/09/03/Fast-4x4-Matrix-Inverse-with-SSE-SIMD-Explained.html
     #[rustfmt::skip]
+    #[cfg(feature = "simd")]
     pub fn inversed_transform_no_scale(&self) -> Self {
         let x = f32x4::from_array(self.0[0].0);
         let y = f32x4::from_array(self.0[1].0);
@@ -192,6 +205,7 @@ impl Matrix4 {
 
     /// A fast matrix inversion for general transformation matrices.
     #[rustfmt::skip]
+    #[cfg(feature = "simd")]
     pub fn inversed_transform(&self) -> Self {
         let x = f32x4::from_array(self.0[0].0);
         let y = f32x4::from_array(self.0[1].0);
@@ -225,6 +239,7 @@ impl Matrix4 {
 
     /// General matrix inversion.
     #[rustfmt::skip]
+    #[cfg(feature = "simd")]
     pub fn inversed(&self) -> Self {
         // 2x2 matrix multiplies
         #[inline]
@@ -372,9 +387,9 @@ impl From<Quaternion> for Matrix4 {
 
         // LLVM Actually does a great job optimizing this. The unrolled matrix mul makes the other version seem less optimal
         Self([
-            Vector4([2.0 * (q.0[0] * q.0[2] - q.0[3] * q.0[1]), 2.0 * (q.0[1] * q.0[2] + q.0[3] * q.0[0]), 1.0 - 2.0 * (q.0[0] * q.0[0] + q.0[1] * q.0[1]), 0.0]),
-            Vector4([1.0 - 2.0 * (q.0[1] * q.0[1] + q.0[2] * q.0[2]), 2.0 * (q.0[0] * q.0[1] - q.0[3] * q.0[2]), 2.0 * (q.0[0] * q.0[2] + q.0[3] * q.0[1]), 0.0]),
-            Vector4([2.0 * (q.0[0] * q.0[1] + q.0[3] * q.0[2]), 1.0 - 2.0 * (q.0[0] * q.0[0] + q.0[2] * q.0[2]), 2.0 * (q.0[1] * q.0[2] - q.0[3] * q.0[0]), 0.0]),
+            Vector4([2.0 * (q.0.0[0] * q.0.0[2] - q.0.0[3] * q.0.0[1]), 2.0 * (q.0.0[1] * q.0.0[2] + q.0.0[3] * q.0.0[0]), 1.0 - 2.0 * (q.0.0[0] * q.0.0[0] + q.0.0[1] * q.0.0[1]), 0.0]),
+            Vector4([1.0 - 2.0 * (q.0.0[1] * q.0.0[1] + q.0.0[2] * q.0.0[2]), 2.0 * (q.0.0[0] * q.0.0[1] - q.0.0[3] * q.0.0[2]), 2.0 * (q.0.0[0] * q.0.0[2] + q.0.0[3] * q.0.0[1]), 0.0]),
+            Vector4([2.0 * (q.0.0[0] * q.0.0[1] + q.0.0[3] * q.0.0[2]), 1.0 - 2.0 * (q.0.0[0] * q.0.0[0] + q.0.0[2] * q.0.0[2]), 2.0 * (q.0.0[1] * q.0.0[2] - q.0.0[3] * q.0.0[0]), 0.0]),
             Vector4([0.0, 0.0, 0.0, 1.0]),
         ])
     }
@@ -386,19 +401,36 @@ macro_rules! mat_mul {
             type Output = Matrix4;
 
             fn mul(self, rhs: $mat_type) -> Matrix4 {
-                let a = f32x4::from_array(rhs.0[0].0);
-                let b = f32x4::from_array(rhs.0[1].0);
-                let c = f32x4::from_array(rhs.0[2].0);
-                let d = f32x4::from_array(rhs.0[3].0);
-                let mut ret = Matrix4::default();
-                for i in 0..4 {
-                    let x = f32x4::splat(self.0[i].0[0]);
-                    let y = f32x4::splat(self.0[i].0[1]);
-                    let z = f32x4::splat(self.0[i].0[2]);
-                    let w = f32x4::splat(self.0[i].0[3]);
-                    ret.0[i] = Vector4(((x * a) + (y * b) + (z * c) + (w * d)).to_array());
+                #[cfg(feature = "simd")]
+                {
+                    let a = f32x4::from_array(rhs.0[0].0);
+                    let b = f32x4::from_array(rhs.0[1].0);
+                    let c = f32x4::from_array(rhs.0[2].0);
+                    let d = f32x4::from_array(rhs.0[3].0);
+                    let mut ret = Matrix4::default();
+                    for i in 0..4 {
+                        let x = f32x4::splat(self.0[i].0[0]);
+                        let y = f32x4::splat(self.0[i].0[1]);
+                        let z = f32x4::splat(self.0[i].0[2]);
+                        let w = f32x4::splat(self.0[i].0[3]);
+                        ret.0[i] = Vector4(((x * a) + (y * b) + (z * c) + (w * d)).to_array());
+                    }
+                    ret
                 }
-                ret
+
+                #[cfg(not(feature = "simd"))]
+                {
+                    let mut ret = Matrix4::default();
+                    for i in 0..4 {
+                        for j in 0..4 {
+                            ret.0[i].0[0] += self.0[i].0[j] * rhs.0[j].0[0];
+                            ret.0[i].0[1] += self.0[i].0[j] * rhs.0[j].0[1];
+                            ret.0[i].0[2] += self.0[i].0[j] * rhs.0[j].0[2];
+                            ret.0[i].0[3] += self.0[i].0[j] * rhs.0[j].0[3];
+                        }
+                    }
+                    ret
+                }
             }
         }
     };

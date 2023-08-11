@@ -1,7 +1,8 @@
+#[cfg(feature = "simd")]
+use std::simd::{self, f32x4, SimdFloat};
 use std::{
     f32::consts,
     ops::{Mul, MulAssign},
-    simd::{self, f32x4, SimdFloat},
 };
 
 use crate::math::{Vector3, Vector4};
@@ -65,9 +66,22 @@ impl Quaternion {
 
     #[inline]
     pub fn conjugated(&self) -> Self {
-        let a = f32x4::from_array(self.0 .0);
-        let b = f32x4::from_array([-1.0, -1.0, -1.0, 1.0]);
-        Self(Vector4((a * b).to_array()))
+        #[cfg(feature = "simd")]
+        {
+            let a = f32x4::from_array(self.0 .0);
+            let b = f32x4::from_array([-1.0, -1.0, -1.0, 1.0]);
+            Self(Vector4((a * b).to_array()))
+        }
+
+        #[cfg(not(feature = "simd"))]
+        {
+            Quaternion(Vector4([
+                -self.0 .0[0],
+                -self.0 .0[1],
+                -self.0 .0[2],
+                self.0 .0[3],
+            ]))
+        }
     }
 
     #[inline]
@@ -175,10 +189,10 @@ macro_rules! quat_mul {
 
                 //Quaternion(Vector4([s, t, u, v]))
                 Quaternion(Vector4([
-                    self.0[0] * rhs.0[3] + self.0[3] * rhs.0[0] + self.0[1] * rhs.0[2] - self.0[2] * rhs.0[1],
-                    self.0[1] * rhs.0[3] + self.0[3] * rhs.0[1] + self.0[2] * rhs.0[0] - self.0[0] * rhs.0[2],
-                    self.0[2] * rhs.0[3] + self.0[3] * rhs.0[2] + self.0[0] * rhs.0[1] - self.0[1] * rhs.0[0],
-                    self.0[3] * rhs.0[3] - self.0[0] * rhs.0[0] - self.0[1] * rhs.0[1] - self.0[2] * rhs.0[2],
+                    self.0.0[0] * rhs.0.0[3] + self.0.0[3] * rhs.0.0[0] + self.0.0[1] * rhs.0.0[2] - self.0.0[2] * rhs.0.0[1],
+                    self.0.0[1] * rhs.0.0[3] + self.0.0[3] * rhs.0.0[1] + self.0.0[2] * rhs.0.0[0] - self.0.0[0] * rhs.0.0[2],
+                    self.0.0[2] * rhs.0.0[3] + self.0.0[3] * rhs.0.0[2] + self.0.0[0] * rhs.0.0[1] - self.0.0[1] * rhs.0.0[0],
+                    self.0.0[3] * rhs.0.0[3] - self.0.0[0] * rhs.0.0[0] - self.0.0[1] * rhs.0.0[1] - self.0.0[2] * rhs.0.0[2],
                 ]))
             }
         }
@@ -196,14 +210,15 @@ macro_rules! quat_vec3_mul {
             type Output = Quaternion;
 
             #[inline]
+            #[rustfmt::skip]
             fn mul(self, rhs: $vec_type) -> Quaternion {
                 // AFAICT converting the vec into a quat works! ? TODO
                 // self * &Quaternion(rhs.widened(0.0))
                 Quaternion(Vector4([
-                    self.0[3] * rhs.0[0] + self.0[1] * rhs.0[2] - self.0[2] * rhs.0[1],
-                    self.0[3] * rhs.0[1] + self.0[2] * rhs.0[0] - self.0[0] * rhs.0[2],
-                    self.0[3] * rhs.0[2] + self.0[0] * rhs.0[1] - self.0[1] * rhs.0[0],
-                    -self.0[0] * rhs.0[0] - self.0[1] * rhs.0[1] - self.0[2] * rhs.0[2],
+                    self.0.0[3] * rhs.0[0] + self.0.0[1] * rhs.0[2] - self.0.0[2] * rhs.0[1],
+                    self.0.0[3] * rhs.0[1] + self.0.0[2] * rhs.0[0] - self.0.0[0] * rhs.0[2],
+                    self.0.0[3] * rhs.0[2] + self.0.0[0] * rhs.0[1] - self.0.0[1] * rhs.0[0],
+                    -self.0.0[0] * rhs.0[0] - self.0.0[1] * rhs.0[1] - self.0.0[2] * rhs.0[2],
                 ]))
             }
         }
