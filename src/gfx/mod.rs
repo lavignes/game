@@ -88,7 +88,7 @@ pub enum GfxError {
 #[derive(Debug)]
 pub struct GfxInitOptions<'a> {
     window_title: &'a str,
-    window_size: Vector2,
+    window_size: (usize, usize),
 
     projection: PerspectiveProjection,
     camera: Camera,
@@ -98,7 +98,7 @@ impl<'a> Default for GfxInitOptions<'a> {
     fn default() -> Self {
         Self {
             window_title: "game",
-            window_size: Vector2::new(800.0, 600.0),
+            window_size: (800, 600),
             projection: PerspectiveProjection {
                 fov: 1.0,
                 aspect_ratio: 800.0 / 600.0,
@@ -106,7 +106,7 @@ impl<'a> Default for GfxInitOptions<'a> {
                 far: 65535.0,
             },
             camera: Camera {
-                position: Vector3::new(2.0, 2.0, 16.0),
+                position: Vector3::new(0.0, 0.0, 0.0),
                 euler_angles: Vector2::splat(0.0),
             },
         }
@@ -133,9 +133,9 @@ impl Gfx {
         let sdl_video = sdl.video().map_err(|e| GfxError::SdlError {
             source: anyhow::anyhow!(e),
         })?;
-        let size: (u32, u32) = window_size.into();
+        let (width, height) = window_size;
         let window = sdl_video
-            .window(window_title, size.0, size.1)
+            .window(window_title, width as u32, height as u32)
             .position_centered()
             .allow_highdpi()
             .build()
@@ -156,17 +156,17 @@ impl Gfx {
 
         mesh.push_vertices(&[
             Vertex {
-                position: Vector3::new(0.0, 0.5, 0.0) * 40.0,
+                position: Vector3::new(0.0, 1.0, -2.0),
                 tex_coord: Vector2::new(0.5, 0.0),
                 ..Default::default()
             },
             Vertex {
-                position: Vector3::new(0.5, -0.5, 0.0) * 40.0,
+                position: Vector3::new(1.0, -1.0, -2.0),
                 tex_coord: Vector2::new(1.0, 1.0),
                 ..Default::default()
             },
             Vertex {
-                position: Vector3::new(-0.5, -0.5, 0.0) * 40.0,
+                position: Vector3::new(-1.0, -1.0, -2.0),
                 tex_coord: Vector2::new(0.0, 1.0),
                 ..Default::default()
             },
@@ -196,7 +196,6 @@ impl Gfx {
 
     #[inline]
     pub fn tick(&mut self) {
-        self.camera.euler_angles = self.camera.euler_angles + Vector2::new(0.02, 0.02);
         self.wgpu.set_camera(self.camera);
         self.wgpu.set_projection(self.projection);
         self.wgpu.tick();

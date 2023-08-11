@@ -411,7 +411,7 @@ pub enum WgpuError {
 
 #[derive(Debug)]
 pub struct WgpuInitOptions {
-    pub window_size: Vector2,
+    pub window_size: (usize, usize),
     pub projection: PerspectiveProjection,
     pub camera: Camera,
 }
@@ -506,14 +506,14 @@ impl Wgpu {
             .unwrap_or(surface_caps.formats[0]);
         tracing::debug!("Surface format: {surface_format:?}");
 
-        let size: (u32, u32) = opts.window_size.into();
+        let (width, height) = opts.window_size;
         surface.configure(
             &device,
             &SurfaceConfiguration {
                 usage: TextureUsages::RENDER_ATTACHMENT,
                 format: surface_format,
-                width: size.0,
-                height: size.1,
+                width: width as u32,
+                height: height as u32,
                 present_mode: PresentMode::Fifo,
                 alpha_mode: surface_caps.alpha_modes[0],
                 view_formats: vec![],
@@ -566,8 +566,8 @@ impl Wgpu {
             .create_texture(&TextureDescriptor {
                 label: Some("depth buffer"),
                 size: Extent3d {
-                    width: size.0,
-                    height: size.1,
+                    width: width as u32,
+                    height: height as u32,
                     depth_or_array_layers: 1,
                 },
                 mip_level_count: 1, // TODO: mip levels
@@ -798,7 +798,6 @@ impl Wgpu {
     #[inline]
     pub fn set_projection(&mut self, projection: PerspectiveProjection) {
         self.projection = projection.into();
-        //self.projection.0 = Matrix4::orthographic(-1.0, -1.0, 1.0, 1.0, -1.0, 1.0);
         self.queue.write_buffer(
             &self.projection_buffer,
             0,
@@ -814,11 +813,6 @@ impl Wgpu {
             0,
             bytemuck::bytes_of(&self.view_look_at.view),
         );
-        //self.queue.write_buffer(
-        //    &self.view_buffer,
-        //    0,
-        //    bytemuck::bytes_of(&Matrix4::rotate_forward(camera.euler_angles.y())),
-        //);
     }
 
     #[inline]
