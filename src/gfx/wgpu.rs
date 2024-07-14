@@ -10,20 +10,21 @@ use std::{
 };
 
 use futures::executor;
-use raw_window_handle::{HasRawDisplayHandle, HasRawWindowHandle};
+use raw_window_handle::{HasDisplayHandle, HasWindowHandle};
 use wgpu::{
     util::{align_to, BufferInitDescriptor, DeviceExt},
     AdapterInfo, AddressMode, Backends, BindGroup, BindGroupDescriptor, BindGroupEntry,
     BindGroupLayoutDescriptor, BindGroupLayoutEntry, BindingResource, BindingType, BlendState,
     Buffer, BufferAddress, BufferBindingType, BufferDescriptor, BufferUsages, BufferViewMut, Color,
     ColorTargetState, ColorWrites, CommandEncoder, CommandEncoderDescriptor, CompareFunction,
-    DepthBiasState, DepthStencilState, Device, DeviceDescriptor, Extent3d, Features, FilterMode,
-    FragmentState, FrontFace, ImageCopyBuffer, ImageCopyTexture, ImageDataLayout, IndexFormat,
-    Instance, InstanceDescriptor, Limits, LoadOp, MapMode, MultisampleState, Operations, Origin3d,
-    PipelineLayoutDescriptor, PolygonMode, PresentMode, PrimitiveState, PrimitiveTopology, Queue,
-    RenderPassColorAttachment, RenderPassDepthStencilAttachment, RenderPassDescriptor,
-    RenderPipeline, RenderPipelineDescriptor, RequestAdapterOptions, SamplerBindingType,
-    SamplerDescriptor, ShaderStages, StencilState, Surface, SurfaceConfiguration,
+    DepthBiasState, DepthStencilState, Device, DeviceDescriptor, Extent3d, Face, Features,
+    FilterMode, FragmentState, FrontFace, ImageCopyBuffer, ImageCopyTexture, ImageDataLayout,
+    IndexFormat, Instance, InstanceDescriptor, Limits, LoadOp, MapMode, MultisampleState,
+    Operations, Origin3d, PipelineCompilationOptions, PipelineLayoutDescriptor, PolygonMode,
+    PresentMode, PrimitiveState, PrimitiveTopology, Queue, RenderPassColorAttachment,
+    RenderPassDepthStencilAttachment, RenderPassDescriptor, RenderPipeline,
+    RenderPipelineDescriptor, RequestAdapterOptions, SamplerBindingType, SamplerDescriptor,
+    ShaderStages, StencilState, StoreOp, Surface, SurfaceConfiguration, SurfaceTargetUnsafe,
     Texture as WgpuTexture, TextureAspect, TextureDescriptor, TextureDimension, TextureFormat,
     TextureSampleType, TextureUsages, TextureView, TextureViewDescriptor, TextureViewDimension,
     VertexBufferLayout, VertexState, VertexStepMode,
@@ -32,7 +33,7 @@ use wgpu::{
 use super::MipLevel;
 use crate::{
     gfx::{Camera, Mesh, PerspectiveProjection, Texture, Vertex},
-    math::{Matrix4, Quaternion, Vector2, Vector3},
+    math::{Matrix4, Quaternion, Vector3},
     util::{FastHashMap, FastHashSet},
 };
 
@@ -270,7 +271,7 @@ struct UberDataBuffer<I> {
     buffer: Buffer,
     streamer: BufferStreamer,
     freelist: Vec<Range<usize>>,
-    offsets: FastHashMap<I, Range<usize>>,
+    ranges: FastHashMap<I, Range<usize>>,
 }
 
 #[derive(Debug)]
@@ -296,7 +297,7 @@ impl<I> UberDataBuffer<I> {
         Self {
             streamer,
             freelist: vec![0..buffer.size() as usize],
-            offsets: FastHashMap::default(),
+            ranges: FastHashMap::default(),
             buffer,
         }
     }
@@ -416,7 +417,7 @@ pub struct WgpuInitOptions {
     pub camera: Camera,
 }
 
-pub struct Wgpu {
+pub struct Wgpu<'window, W> {
     device: Device,
     queue: Queue,
     render_pipelines: FastHashMap<ShaderId, (BindGroup, RenderPipeline)>,
@@ -425,7 +426,8 @@ pub struct Wgpu {
     instance_id_counter: usize,
     texture_id_counter: usize,
 
-    surface: Surface,
+    window: W,
+    surface: Surface<'window>,
 
     pending_upload_jobs: BinaryHeap<UploadJob>,
     current_upload_job: Option<UploadJob>,
@@ -452,16 +454,23 @@ pub struct Wgpu {
     depth_buffer: TextureView,
 }
 
-impl Wgpu {
-    pub fn new<W: HasRawWindowHandle + HasRawDisplayHandle>(
-        window: &W,
-        opts: WgpuInitOptions,
-    ) -> Result<Self, WgpuError> {
+impl<'window, W> Wgpu<'window, W>
+where
+    W: HasWindowHandle + HasDisplayHandle,
+{
+    pub fn new(window: W, opts: WgpuInitOptions) -> Result<Self, WgpuError> {
         let instance = Instance::new(InstanceDescriptor {
             backends: Backends::PRIMARY,
             ..InstanceDescriptor::default()
         });
-        let surface = unsafe { instance.create_surface(window) }.map_err(|e| {
+
+        let surface_target = unsafe { SurfaceTargetUnsafe::from_window(&window) }.map_err(|e| {
+            WgpuError::InitializationError {
+                source: anyhow::anyhow!(e),
+            }
+        })?;
+
+        let surface = unsafe { instance.create_surface_unsafe(surface_target) }.map_err(|e| {
             WgpuError::InitializationError {
                 source: anyhow::anyhow!(e),
             }
@@ -483,10 +492,11 @@ impl Wgpu {
         let (device, queue) = executor::block_on(adapter.request_device(
             &DeviceDescriptor {
                 label: Some("primary device"),
-                features: Features::SAMPLED_TEXTURE_AND_STORAGE_BUFFER_ARRAY_NON_UNIFORM_INDEXING
-                    | Features::TEXTURE_COMPRESSION_BC
-                    | Features::TEXTURE_BINDING_ARRAY,
-                limits: Limits::default(),
+                required_features:
+                    Features::SAMPLED_TEXTURE_AND_STORAGE_BUFFER_ARRAY_NON_UNIFORM_INDEXING
+                        | Features::TEXTURE_COMPRESSION_BC
+                        | Features::TEXTURE_BINDING_ARRAY,
+                required_limits: Limits::default(),
             },
             None,
         ))
@@ -514,7 +524,8 @@ impl Wgpu {
                 format: surface_format,
                 width: width as u32,
                 height: height as u32,
-                present_mode: PresentMode::Fifo,
+                desired_maximum_frame_latency: 2,
+                present_mode: PresentMode::AutoNoVsync,
                 alpha_mode: surface_caps.alpha_modes[0],
                 view_formats: vec![],
             },
@@ -596,7 +607,7 @@ impl Wgpu {
             usage: BufferUsages::UNIFORM | BufferUsages::COPY_DST,
         });
 
-        let shader = device.create_shader_module(wgpu::include_wgsl!("shader.wgsl"));
+        let shader = device.create_shader_module(wgpu::include_wgsl!("mesh_shader.wgsl"));
 
         let sampler = device.create_sampler(&SamplerDescriptor {
             label: Some("linear sampler"),
@@ -711,6 +722,7 @@ impl Wgpu {
             layout: Some(&render_pipeline_layout),
             vertex: VertexState {
                 module: &shader,
+                compilation_options: PipelineCompilationOptions::default(),
                 entry_point: "vertex_main",
                 buffers: &[VertexBufferLayout {
                     array_stride: mem::size_of::<Vertex>() as BufferAddress,
@@ -724,6 +736,7 @@ impl Wgpu {
             },
             fragment: Some(FragmentState {
                 module: &shader,
+                compilation_options: PipelineCompilationOptions::default(),
                 entry_point: "fragment_main",
                 targets: &[Some(ColorTargetState {
                     format: surface_format,
@@ -735,7 +748,7 @@ impl Wgpu {
                 topology: PrimitiveTopology::TriangleList,
                 strip_index_format: None,
                 front_face: FrontFace::Cw,
-                cull_mode: None, // TODO: culling
+                cull_mode: Some(Face::Back),
                 polygon_mode: PolygonMode::Fill,
                 unclipped_depth: false,
                 conservative: false,
@@ -767,6 +780,7 @@ impl Wgpu {
             instance_id_counter: 0,
             texture_id_counter: 0,
 
+            window,
             surface,
 
             pending_upload_jobs: BinaryHeap::new(),
@@ -818,6 +832,33 @@ impl Wgpu {
     #[inline]
     pub fn pop_mesh(&mut self) -> Mesh {
         self.mesh_freelist.pop().unwrap_or_else(Mesh::new)
+    }
+
+    pub fn free_mesh(&mut self, id: MeshId) {
+        // TODO: panic if mesh is already free or currently being uploaded etc.
+        let free_range = self.vertex_buffer.ranges.remove(&id).unwrap();
+        // insert sort by length and then by start position
+        let index = self
+            .vertex_buffer
+            .freelist
+            .binary_search_by(|other| match other.len().cmp(&free_range.len()) {
+                Ordering::Equal => other.start.cmp(&free_range.start),
+                ord => ord,
+            })
+            .unwrap_err(); // the `Err` is the insert position
+        self.vertex_buffer.freelist.insert(index, free_range);
+
+        let free_range = self.index_buffer.ranges.remove(&id).unwrap();
+        // insert sort by length and then by start position
+        let index = self
+            .index_buffer
+            .freelist
+            .binary_search_by(|other| match other.len().cmp(&free_range.len()) {
+                Ordering::Equal => other.start.cmp(&free_range.start),
+                ord => ord,
+            })
+            .unwrap_err(); // the `Err` is the insert position
+        self.index_buffer.freelist.insert(index, free_range);
     }
 
     pub fn queue_mesh_upload(&mut self, mesh: Mesh, priority: usize) -> MeshId {
@@ -875,8 +916,8 @@ impl Wgpu {
         let id = MeshId(self.mesh_id_counter);
         self.mesh_id_counter += 1;
         self.uploading_meshes.insert(id, mesh);
-        self.vertex_buffer.offsets.insert(id, vertex_range.clone());
-        self.index_buffer.offsets.insert(id, index_range.clone());
+        self.vertex_buffer.ranges.insert(id, vertex_range.clone());
+        self.index_buffer.ranges.insert(id, index_range.clone());
         self.pending_upload_jobs.push(UploadJob::Mesh {
             priority,
             id,
@@ -893,8 +934,23 @@ impl Wgpu {
         self.texture_freelist.pop().unwrap_or_else(Texture::new)
     }
 
+    pub fn free_texture(&mut self, id: TextureId) {
+        // TODO: panic if texture is already free or currently being uploaded etc.
+        let offset = self.texture_buffer.offsets.remove(&id).unwrap();
+        let free_range = offset..offset + 1;
+        let index = self
+            .texture_buffer
+            .freelist
+            .binary_search_by(|other| match other.len().cmp(&free_range.len()) {
+                Ordering::Equal => other.start.cmp(&free_range.start),
+                ord => ord,
+            })
+            .unwrap_err(); // the `Err` is the insert position
+        self.texture_buffer.freelist.insert(index, free_range);
+    }
+
     pub fn queue_texture_upload(&mut self, texture: Texture, priority: usize) -> TextureId {
-        let texture_range = self.index_buffer.freelist.pop().unwrap();
+        let texture_range = self.texture_buffer.freelist.pop().unwrap();
 
         // re-insert any leftover free space
         if texture_range.len() > 1 {
@@ -997,6 +1053,8 @@ impl Wgpu {
                         indices_bytes.len()
                     );
                     self.current_upload_job = None;
+                    let mesh = self.uploading_meshes.remove(&id).unwrap();
+                    self.mesh_freelist.push(mesh);
                     self.complete_meshes.insert(id);
                 } else {
                     self.current_upload_job = Some(UploadJob::Mesh {
@@ -1043,6 +1101,8 @@ impl Wgpu {
                 if texture_copy_size == texture_bytes_remaining {
                     tracing::debug!("Finished uploading {id:?}. ({} bytes)", mip.data().len());
                     self.current_upload_job = None;
+                    let texture = self.uploading_textures.remove(&id).unwrap();
+                    self.texture_freelist.push(texture);
                     self.complete_textures.insert(id);
                 } else {
                     self.current_upload_job = Some(UploadJob::Texture {
@@ -1083,19 +1143,21 @@ impl Wgpu {
         {
             let mut pass = encoder.begin_render_pass(&RenderPassDescriptor {
                 label: Some("main render pass"),
+                timestamp_writes: None,
+                occlusion_query_set: None,
                 color_attachments: &[Some(RenderPassColorAttachment {
                     view: &output_texture_view,
                     resolve_target: None,
                     ops: Operations {
                         load: LoadOp::Clear(Color::BLUE),
-                        store: true,
+                        store: StoreOp::Store,
                     },
                 })],
                 depth_stencil_attachment: Some(RenderPassDepthStencilAttachment {
                     view: &self.depth_buffer,
                     depth_ops: Some(Operations {
                         load: LoadOp::Clear(1.0),
-                        store: true,
+                        store: StoreOp::Store,
                     }),
                     stencil_ops: None,
                 }),

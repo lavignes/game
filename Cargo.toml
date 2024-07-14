@@ -21,6 +21,6 @@ tracing-subscriber = "0.3"
 bincode = "2.0.0-rc.1"
 bincode_derive = "2.0.0-rc.1"
 
-wgpu = "0.17.0"
-sdl2 = { git = "https://github.com/Rust-SDL2/rust-sdl2.git", features = ["bundled", "raw-window-handle"] }
-raw-window-handle = "0.5"
+wgpu = "0.20"
+sdl2 = { version = "0.37", features = ["bundled", "raw-window-handle"] }
+raw-window-handle = "0.6"

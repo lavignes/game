@@ -2,7 +2,7 @@ use sdl2::{video::Window, Sdl};
 
 use crate::{
     gfx::wgpu::{Wgpu, WgpuError},
-    math::{Matrix4, Quaternion, Vector2, Vector3, Vector4},
+    math::{Matrix4, Quaternion, Vector2, Vector3},
     util,
 };
 
@@ -113,15 +113,14 @@ impl<'a> Default for GfxInitOptions<'a> {
     }
 }
 
-pub struct Gfx {
-    wgpu: Wgpu,
-    window: Window,
+pub struct Gfx<'window> {
+    wgpu: Wgpu<'window, Window>,
 
     projection: PerspectiveProjection,
     camera: Camera,
 }
 
-impl Gfx {
+impl<'window> Gfx<'window> {
     pub fn new(sdl: &Sdl, opts: GfxInitOptions<'_>) -> Result<Self, GfxError> {
         let GfxInitOptions {
             window_title,
@@ -144,7 +143,7 @@ impl Gfx {
             })?;
 
         let mut wgpu = Wgpu::new(
-            &window,
+            window,
             WgpuInitOptions {
                 window_size,
                 projection,
@@ -156,8 +155,8 @@ impl Gfx {
 
         mesh.push_vertices(&[
             Vertex {
-                position: Vector3::new(0.0, 1.0, -2.0),
-                tex_coord: Vector2::new(0.5, 0.0),
+                position: Vector3::new(-1.0, -1.0, -2.0),
+                tex_coord: Vector2::new(0.0, 1.0),
                 ..Default::default()
             },
             Vertex {
@@ -166,8 +165,8 @@ impl Gfx {
                 ..Default::default()
             },
             Vertex {
-                position: Vector3::new(-1.0, -1.0, -2.0),
-                tex_coord: Vector2::new(0.0, 1.0),
+                position: Vector3::new(0.0, 1.0, -2.0),
+                tex_coord: Vector2::new(0.5, 0.0),
                 ..Default::default()
             },
         ]);
@@ -188,7 +187,6 @@ impl Gfx {
 
         Ok(Self {
             wgpu,
-            window,
             projection,
             camera,
         })
